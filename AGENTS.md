@@ -42,16 +42,7 @@ Alpaca CLI is used for operational automation, diagnostics, paper smoke tests, r
 ### Safety boundary
 The path is:
 
-Agent reasoning
-→ contract validation
-→ evidence validation
-→ deterministic Risk Governor
-→ Execution Guard
-→ idempotency check
-→ Alpaca execution adapter
-→ broker confirmation
-→ reconciliation
-→ event/audit log
+Agent reasoning → contract validation → evidence validation → deterministic Risk Governor → Execution Guard → idempotency check → Alpaca execution adapter → broker confirmation → reconciliation → event/audit log
 
 No LLM may directly place, modify or cancel an order.
 
@@ -101,27 +92,9 @@ Unknown broker submission status must be reconciled before any retry.
 
 Canonical opportunity lifecycle:
 
-DETECTED
-→ INVESTIGATING
-→ THESIS_CREATED
-→ THESIS_CHALLENGED
-→ STRATEGY_SELECTED
-→ STRESS_TESTED
-→ RISK_EVALUATED
-→ APPROVED
-→ EXECUTION_READY
-→ SUBMITTED
-→ FILLED
-→ POSITION_OPEN
-→ POSITION_MONITORING
-→ EXIT_SIGNAL
-→ EXIT_EXECUTION
-→ POSITION_CLOSED
-→ AUTOPSY
-→ LEARNED
+DETECTED → INVESTIGATING → THESIS_CREATED → THESIS_CHALLENGED → STRATEGY_SELECTED → STRESS_TESTED → RISK_EVALUATED → APPROVED → EXECUTION_READY → SUBMITTED → FILLED → POSITION_OPEN → POSITION_MONITORING → EXIT_SIGNAL → EXIT_EXECUTION → POSITION_CLOSED → AUTOPSY → LEARNED
 
-Alternative terminal/failure states:
-FAILED, REJECTED.
+Alternative terminal/failure states: FAILED, REJECTED.
 
 Every transition requires evidence and is recorded as an oracle event.
 
@@ -148,17 +121,7 @@ Use JSON structured output from Featherless.
 
 ## 7. Quantitative integrity
 
-Python/application code calculates exact quantities:
-- indicators;
-- returns;
-- volatility;
-- IV;
-- Greeks;
-- spreads;
-- reward/risk;
-- exposure;
-- P&L;
-- position sizing.
+Python/application code calculates exact quantities: indicators, returns, volatility, IV, Greeks, spreads, reward/risk, exposure, P&L and position sizing.
 
 The model may interpret these values, compare evidence and explain them.
 
@@ -166,33 +129,15 @@ Never rely on LLM arithmetic for an execution-critical value.
 
 ## 8. Options
 
-ORACLE X is options-aware.
-
-Represent multi-leg strategies explicitly. Alpaca MLEG supports up to four legs; the architecture must support:
-- spreads;
-- straddles/strangles;
-- iron condors;
-- other defined-risk combinations.
+ORACLE X is options-aware. Represent multi-leg strategies explicitly, including spreads, straddles/strangles, iron condors and other defined-risk combinations.
 
 Each leg must record contract, underlying, option type, strike, expiration, side, position intent and ratio, plus available Greeks/IV.
 
 ## 9. Auditability
 
-Record:
-- agent decisions;
-- Featherless inference traces;
-- Alpaca MCP calls;
-- risk evaluations/events;
-- trades/legs/orders/execution events;
-- positions;
-- state transitions;
-- system events;
-- trade autopsies;
-- learning memory.
+Record agent decisions, Featherless inference traces, Alpaca MCP calls, risk evaluations/events, trades/legs/orders/execution events, positions, state transitions, system events, trade autopsies and learning memory.
 
 Decision replay must be possible from stored evidence and event history.
-
-Store hashes of important inputs/outputs where specified by the schema.
 
 ## 10. Security
 
@@ -202,38 +147,19 @@ Store hashes of important inputs/outputs where specified by the schema.
 - Provide .env.example only.
 - Default to paper trading.
 - Fail closed when critical dependencies are unavailable.
-- Do not add an LLM-controlled secret or execution pathway.
 - Validate external payloads before use.
 
 ## 11. Database
 
-PostgreSQL is the source of truth.
+PostgreSQL is the source of truth. Use migrations under `supabase/migrations/`.
 
-Use migrations under `supabase/migrations/`.
-
-Do not silently redesign the schema. Any schema change must update `docs/DATABASE.md` and migration files.
-
-The canonical schema includes:
-users, portfolios, risk_policies, market_snapshots, opportunities, trades,
-agent_decisions, inference_traces, risk_evaluations, trade_legs,
-alpaca_orders, execution_events, positions, oracle_events, risk_events,
-mcp_tool_calls, trade_autopsies, oracle_memory, system_state.
+Canonical tables: users, portfolios, risk_policies, market_snapshots, opportunities, trades, agent_decisions, inference_traces, risk_evaluations, trade_legs, alpaca_orders, execution_events, positions, oracle_events, risk_events, mcp_tool_calls, trade_autopsies, oracle_memory, system_state.
 
 ## 12. Testing
 
-Financial/risk logic requires automated tests.
+Financial/risk logic requires automated tests. Minimum coverage includes each agent contract, Risk Governor, state machine, Execution Guard, Alpaca adapter, idempotency, reconciliation and failure/timeout paths.
 
-Minimum tests:
-- each agent contract;
-- Risk Governor;
-- state machine;
-- Execution Guard;
-- Alpaca adapter;
-- idempotency;
-- reconciliation;
-- failure/timeout paths.
-
-A test must prove that duplicate order submission cannot occur.
+A test must prove duplicate order submission cannot occur.
 
 ## 13. Engineering behavior for Codex
 
@@ -250,14 +176,4 @@ Do not invent missing business rules. Put unresolved items in `docs/DECISIONS.md
 
 ## 14. Definition of done
 
-A feature is not done merely because it compiles.
-
-It is done when:
-- implementation exists;
-- typed contracts exist;
-- failure paths are handled;
-- tests exist;
-- audit/event behavior is implemented where relevant;
-- documentation is updated;
-- secrets are not exposed;
-- paper-trading safety remains intact.
+A feature is done when implementation, typed contracts, failure handling, tests, relevant audit/event behavior and documentation are present, secrets are protected, and paper-trading safety remains intact.

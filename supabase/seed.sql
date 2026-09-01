@@ -1,0 +1,2 @@
+-- Development seed data will be added after the schema is verified.
+-- Never place API keys or other secrets in this file.
