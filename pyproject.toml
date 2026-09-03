@@ -24,3 +24,6 @@ where = ["backend"]
 pythonpath = ["backend"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.vercel]
+entrypoint = "backend.app.main:app"

@@ -1,4 +1,5 @@
 from functools import lru_cache
+import os
 from urllib.parse import urlparse
 
 from pydantic import model_validator
@@ -14,7 +15,7 @@ class Settings(BaseSettings):
     live_trading_enabled: bool = False
     execution_enabled: bool = False
     kill_switch_active: bool = False
-    oracle_db_path: str = "oracle_x.db"
+    oracle_db_path: str = "/tmp/oracle_x.db" if os.getenv("VERCEL") else "oracle_x.db"
 
     featherless_api_key: str = ""
     featherless_base_url: str = "https://api.featherless.ai/v1"

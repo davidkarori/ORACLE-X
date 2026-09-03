@@ -44,6 +44,18 @@ class WorkflowService:
         self._tasks: set[asyncio.Task[Any]] = set()
 
     def start(self, request: CreateRunRequest) -> WorkflowRun:
+        run = self._create_run(request)
+        task = asyncio.create_task(self._run(run))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return run
+
+    async def run_to_completion(self, request: CreateRunRequest) -> WorkflowRun:
+        run = self._create_run(request)
+        await self._run(run)
+        return run
+
+    def _create_run(self, request: CreateRunRequest) -> WorkflowRun:
         now = utc_now()
         run = WorkflowRun(
             id=uuid.uuid4().hex,
@@ -57,9 +69,6 @@ class WorkflowService:
         )
         self.store.save_run(run)
         self.store.append(run.id, "OPPORTUNITY_DETECTED", "SYSTEM", {"symbol": run.symbol})
-        task = asyncio.create_task(self._run(run))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
         return run
 
     async def _run(self, run: WorkflowRun) -> None:

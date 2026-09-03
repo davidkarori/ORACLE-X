@@ -22,6 +22,6 @@
 - Only enable paper execution if every gate passes
 - Record the two-minute demo using `docs/VIDEO-SCRIPT.md`
 - Publish the repository or provide judges access
-- Deploy the Docker image or Procfile service and verify `/api/health`
+- Deploy with Vercel, the Docker image or the Procfile service and verify `/api/health`
 - Add the public demo, repository and video URLs to the hackathon form
 - Submit before the platform deadline; do not rely on a last-minute grace period

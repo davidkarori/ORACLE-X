@@ -48,7 +48,7 @@ def list_runs():
 
 @app.post("/api/runs", status_code=202)
 async def create_run(request: CreateRunRequest):
-    return workflow.start(request)
+    return await workflow.run_to_completion(request)
 
 
 @app.get("/api/runs/{run_id}")
