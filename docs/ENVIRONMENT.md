@@ -10,12 +10,13 @@ LOG_LEVEL=INFO
 
 ## Database
 
+ORACLE_DB_PATH=oracle_x.db
 DATABASE_URL=
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 
-Server-only: `SUPABASE_SERVICE_ROLE_KEY`
+When `DATABASE_URL` starts with `postgresql://` or `postgres://`, the runtime uses PostgreSQL. Otherwise it preserves the SQLite local/test implementation. Server-only: `DATABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
 
 ## Featherless
 
@@ -45,6 +46,8 @@ CORS_ORIGINS=
 
 REDIS_URL=
 MCP_SERVER_URL=
+MCP_TIMEOUT_SECONDS=15
+ALPACA_TOOLSETS=assets,stock-data,options-data,news
 
 ## Rules
 
@@ -53,3 +56,4 @@ MCP_SERVER_URL=
 - Production/live trading is not part of the initial hackathon implementation.
 - Frontend receives public configuration only.
 - Server secrets are never serialized into API responses.
+- Mutation-capable MCP toolsets are rejected at startup.

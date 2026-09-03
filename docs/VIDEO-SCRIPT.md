@@ -10,11 +10,11 @@ Show the War Room.
 
 Enter `AAPL`, keep execution off, and select **Run committee**.
 
-"Athena discovers and explains the opportunity. Hades attacks the thesis. Hermes creates a structured, defined-risk options expression. Morpheus examines the deterministic stress scenarios. Every response is typed and recorded, but none of these agents can call the broker execution path."
+"Hermes mediates read-only Alpaca MCP research, and every tool call is visible. Athena builds the thesis. Hades attacks it and can force a revision or rejection. Deterministic services choose, price and stress the options structure. None of the agents can call the broker execution path."
 
 ## 0:45 - Show the strategy and numbers
 
-Point to the option leg and quantitative panel.
+Point to the normalized option legs, quantitative panel and scenario P&L.
 
 "The proposed trade is not free-form prose. The contract, strike, expiry, quantity, ratio, premium, break-even and maximum loss are explicit. Authoritative risk numbers are calculated by software, never invented by a model."
 
@@ -28,7 +28,7 @@ Point to Risk Governor and Execution Guard.
 
 Scroll through Decision Replay and toggle the kill switch once.
 
-"Every transition, model decision, calculation, verdict and execution validation becomes an append-only event. The kill switch blocks the system deterministically. We can answer why a trade was approved, rejected or stopped."
+"Every MCP call, transition, model decision, calculation, verdict and execution validation becomes an append-only event. The fixture lifecycle safely reaches position close, where Morpheus records an advisory lesson. The kill switch still blocks the system deterministically."
 
 ## 1:50 - Close
 

@@ -20,27 +20,22 @@ ORACLE-X/
 │   └── DECISIONS.md
 ├── backend/
 │   ├── app/
-│   │   ├── api/
-│   │   ├── agents/
-│   │   ├── domain/
-│   │   ├── execution/
-│   │   ├── integrations/
-│   │   ├── risk/
-│   │   ├── state/
-│   │   ├── events/
-│   │   ├── persistence/
-│   │   └── main.py
-│   ├── tests/
-│   └── pyproject.toml
-├── frontend/
-│   ├── src/
-│   └── package.json
+│   │   ├── config.py
+│   │   ├── domain.py
+│   │   ├── integrations.py
+│   │   ├── mcp_adapter.py
+│   │   ├── quant.py
+│   │   ├── store.py
+│   │   ├── workflow.py
+│   │   ├── main.py
+│   │   └── static/
+├── config/
+│   └── alpaca-mcp.readonly.json
 ├── supabase/
 │   ├── migrations/
 │   └── seed.sql
 └── tests/
-    ├── integration/
-    └── e2e/
+    └── test_workflow.py
 ```
 
 Codex may refine internal folder names while preserving the architectural boundaries.

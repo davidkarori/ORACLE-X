@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     execution_enabled: bool = False
     kill_switch_active: bool = False
     oracle_db_path: str = "/tmp/oracle_x.db" if os.getenv("VERCEL") else "oracle_x.db"
+    database_url: str = ""
 
     featherless_api_key: str = ""
     featherless_base_url: str = "https://api.featherless.ai/v1"
@@ -32,7 +33,8 @@ class Settings(BaseSettings):
     alpaca_data_base_url: str = "https://data.alpaca.markets"
     alpaca_paper_trade: bool = True
     mcp_server_url: str = ""
-    alpaca_toolsets: str = "account,assets,stock-data,options-data,news"
+    mcp_timeout_seconds: float = 15
+    alpaca_toolsets: str = "assets,stock-data,options-data,news"
 
     risk_approval_ttl_seconds: int = 300
     max_market_data_age_seconds: int = 60
@@ -50,6 +52,10 @@ class Settings(BaseSettings):
             raise ValueError("ALPACA_PAPER_TRADE must remain true")
         if not self.is_paper_endpoint:
             raise ValueError("Alpaca trading URL must be the paper endpoint")
+        toolsets = {item.strip() for item in self.alpaca_toolsets.split(",") if item.strip()}
+        forbidden = toolsets.intersection({"trading", "watchlists"})
+        if forbidden:
+            raise ValueError(f"Mutation-capable Alpaca MCP toolsets are forbidden: {sorted(forbidden)}")
         return self
 
     @property
@@ -64,6 +70,10 @@ class Settings(BaseSettings):
     @property
     def featherless_configured(self) -> bool:
         return bool(self.featherless_api_key)
+
+    @property
+    def postgres_configured(self) -> bool:
+        return self.database_url.startswith(("postgresql://", "postgres://"))
 
     def model_for(self, role: str) -> str:
         return {

@@ -21,7 +21,10 @@
       <section class="run-form">
         <label for="symbol">UNDERLYING</label>
         <div class="symbol-row"><input id="symbol" value="SPY" maxlength="8"><button id="runButton">Run committee</button></div>
+        <label for="riskProfile">RISK PROFILE</label>
+        <select id="riskProfile"><option value="CONSERVATIVE">Conservative</option><option value="AGGRESSIVE">Aggressive</option></select>
         <label class="check"><input id="execute" type="checkbox"> Request paper execution</label>
+        <label class="check"><input id="simulate" type="checkbox" checked> Simulate fixture lifecycle</label>
       </section>
       <div class="rail-title"><span>RECENT RUNS</span><button id="refreshButton" class="quiet">Refresh</button></div>
       <nav id="runList" class="run-list"><p class="empty">No committee runs yet.</p></nav>
@@ -40,14 +43,30 @@
         <div id="committee" class="committee"></div>
       </section>
 
+      <section>
+        <div class="section-heading"><h2>Alpaca MCP Research</h2><span>READ ONLY</span></div>
+        <div id="mcpCalls" class="mcp-grid empty-panel">No mediated tool calls.</div>
+      </section>
+
       <div class="two-column">
         <section>
           <div class="section-heading"><h2>Strategy & Quant</h2><span>DETERMINISTIC</span></div>
           <div id="strategy" class="data-panel empty-panel">No normalized strategy.</div>
         </section>
         <section>
-          <div class="section-heading"><h2>Safety Gates</h2><span>FAIL CLOSED</span></div>
+          <div class="section-heading"><h2>Stress & Safety Gates</h2><span>FAIL CLOSED</span></div>
           <div id="gates" class="data-panel empty-panel">No risk evaluation.</div>
+        </section>
+      </div>
+
+      <div class="two-column">
+        <section>
+          <div class="section-heading"><h2>Position Lifecycle</h2><span>DETERMINISTIC</span></div>
+          <div id="position" class="data-panel empty-panel">No position state.</div>
+        </section>
+        <section>
+          <div class="section-heading"><h2>Autopsy & Learning</h2><span>ADVISORY ONLY</span></div>
+          <div id="autopsy" class="data-panel empty-panel">No completed autopsy.</div>
         </section>
       </div>
 

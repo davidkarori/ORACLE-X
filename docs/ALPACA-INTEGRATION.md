@@ -3,13 +3,15 @@
 ## Three distinct roles
 
 ### Alpaca MCP
-Agent-facing market and account/tool access. Use explicit allowlists.
+Agent-facing market research access through Hermes mediation. Use explicit allowlists.
 
-Suggested permissions:
-- ATHENA: market data, news, account/positions; no execution.
-- HADES: market/news/positions; no execution.
-- HERMES: options chain/snapshots/account/positions; no execution.
-- MORPHEUS: market/positions/options; no execution.
+Allowed research categories:
+- assets;
+- stock data;
+- options data;
+- news.
+
+The application records the requesting agent, arguments, result metadata, latency and success/failure. Trading, order, position mutation, exercise and account-configuration tools are forbidden.
 
 ### Alpaca Trading API
 Application-controlled execution. Only the execution adapter may place orders.

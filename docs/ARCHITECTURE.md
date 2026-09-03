@@ -17,9 +17,10 @@ API / Orchestrator
         |      +--> MORPHEUS
         |             |
         |             +--> Featherless API
-        |             +--> Alpaca MCP
         |
-        +--> Quant/Risk Services
+        +--> Read-only MCP Adapter --> Alpaca MCP
+        |
+        +--> Strategy/Quant/Stress Services
         |      |
         |      +--> Risk Governor
         |      +--> Execution Guard
@@ -41,16 +42,16 @@ Presentation only. It never holds broker or Featherless secrets.
 Coordinates lifecycle, validates commands, starts agent runs, persists events and exposes read APIs.
 
 ### Agent runtime
-Runs agents using typed contracts and explicit tool allowlists.
+Runs typed Featherless contracts. Hermes receives mediated MCP evidence; agent code never receives broker mutation tools.
 
 ### Featherless adapter
 OpenAI-compatible client targeting https://api.featherless.ai/v1. The adapter owns provider-specific concerns and records inference traces.
 
 ### Alpaca MCP adapter
-Provides agent-facing research/tool access. MCP permissions are scoped by agent.
+Provides strictly allowlisted stock, options and news research. It performs the MCP handshake, records metadata for every call and exposes no execution tool.
 
 ### Quant service
-Calculates exact market/risk values in deterministic code.
+Selects normalized supported option structures and calculates exact market/risk values and stress scenarios in deterministic code.
 
 ### Risk Governor
 Hard safety boundary. Returns APPROVE/REJECT with reason codes and measured values.
@@ -62,7 +63,7 @@ Final mechanical gate.
 Only component permitted to submit broker orders.
 
 ### Event store
-`oracle_events` provides durable lifecycle history and replay evidence.
+SQLite supports local/fixture work. PostgreSQL/Supabase is selected by `DATABASE_URL` for deployed use. `oracle_events`, execution-intent uniqueness and advisory memory preserve durable replay semantics.
 
 ## Failure philosophy
 

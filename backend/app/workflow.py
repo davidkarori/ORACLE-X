@@ -6,40 +6,63 @@ from typing import Any
 from .config import Settings
 from .domain import (
     AgentRole,
+    AthenaDecision,
     CreateRunRequest,
     ExecutionValidation,
     GateResult,
+    HadesDecision,
+    LearningMemory,
     LifecycleState,
-    OptionLeg,
-    QuantMetrics,
+    PositionState,
     RiskEvaluation,
-    Strategy,
     WorkflowRun,
     utc_now,
 )
 from .integrations import AlpacaClient, FeatherlessClient, IntegrationError
-from .store import AuditStore
+from .mcp_adapter import AlpacaMcpAdapter
+from .quant import QuantService, StrategyEngine, StrategyError, StrategyRequest, StressEngine
+from .store import PersistenceStore
 
 
-ALLOWED_TRANSITIONS = {
-    LifecycleState.DETECTED: {LifecycleState.INVESTIGATING, LifecycleState.FAILED},
-    LifecycleState.INVESTIGATING: {LifecycleState.THESIS_CREATED, LifecycleState.FAILED},
-    LifecycleState.THESIS_CREATED: {LifecycleState.THESIS_CHALLENGED, LifecycleState.REJECTED, LifecycleState.FAILED},
-    LifecycleState.THESIS_CHALLENGED: {LifecycleState.STRATEGY_SELECTED, LifecycleState.REJECTED, LifecycleState.FAILED},
-    LifecycleState.STRATEGY_SELECTED: {LifecycleState.STRESS_TESTED, LifecycleState.FAILED},
-    LifecycleState.STRESS_TESTED: {LifecycleState.RISK_EVALUATED, LifecycleState.FAILED},
-    LifecycleState.RISK_EVALUATED: {LifecycleState.APPROVED, LifecycleState.REJECTED, LifecycleState.FAILED},
-    LifecycleState.APPROVED: {LifecycleState.EXECUTION_READY, LifecycleState.REJECTED},
-    LifecycleState.EXECUTION_READY: {LifecycleState.SUBMITTED, LifecycleState.REJECTED, LifecycleState.FAILED},
+CANONICAL_PATH = [
+    LifecycleState.DETECTED,
+    LifecycleState.INVESTIGATING,
+    LifecycleState.THESIS_CREATED,
+    LifecycleState.THESIS_CHALLENGED,
+    LifecycleState.STRATEGY_SELECTED,
+    LifecycleState.STRESS_TESTED,
+    LifecycleState.RISK_EVALUATED,
+    LifecycleState.APPROVED,
+    LifecycleState.EXECUTION_READY,
+    LifecycleState.SUBMITTED,
+    LifecycleState.FILLED,
+    LifecycleState.POSITION_OPEN,
+    LifecycleState.POSITION_MONITORING,
+    LifecycleState.EXIT_SIGNAL,
+    LifecycleState.EXIT_EXECUTION,
+    LifecycleState.POSITION_CLOSED,
+    LifecycleState.AUTOPSY,
+    LifecycleState.LEARNED,
+]
+ALLOWED_TRANSITIONS: dict[LifecycleState, set[LifecycleState]] = {
+    state: {CANONICAL_PATH[index + 1], LifecycleState.REJECTED, LifecycleState.FAILED}
+    for index, state in enumerate(CANONICAL_PATH[:-1])
 }
+ALLOWED_TRANSITIONS[LifecycleState.LEARNED] = set()
+ALLOWED_TRANSITIONS[LifecycleState.REJECTED] = set()
+ALLOWED_TRANSITIONS[LifecycleState.FAILED] = set()
 
 
 class WorkflowService:
-    def __init__(self, settings: Settings, store: AuditStore) -> None:
+    def __init__(self, settings: Settings, store: PersistenceStore) -> None:
         self.settings = settings
         self.store = store
         self.featherless = FeatherlessClient(settings)
         self.alpaca = AlpacaClient(settings)
+        self.mcp = AlpacaMcpAdapter(settings)
+        self.strategy_engine = StrategyEngine()
+        self.quant = QuantService()
+        self.stress = StressEngine()
         self.kill_switch = settings.kill_switch_active
         self._tasks: set[asyncio.Task[Any]] = set()
 
@@ -57,64 +80,90 @@ class WorkflowService:
 
     def _create_run(self, request: CreateRunRequest) -> WorkflowRun:
         now = utc_now()
+        configured = [self.settings.alpaca_configured, self.settings.featherless_configured, bool(self.settings.mcp_server_url)]
+        mode = "connected" if all(configured) else "fixture" if not any(configured) else "mixed"
         run = WorkflowRun(
-            id=uuid.uuid4().hex,
+            id=str(uuid.uuid4()),
             symbol=request.symbol,
             state=LifecycleState.DETECTED,
             status="RUNNING",
-            mode="live-integrations" if self.settings.alpaca_configured else "fixture",
+            mode=mode,
             execute_requested=request.execute,
+            simulate_lifecycle=request.simulate_lifecycle,
+            risk_profile=request.risk_profile,
             created_at=now,
             updated_at=now,
         )
         self.store.save_run(run)
-        self.store.append(run.id, "OPPORTUNITY_DETECTED", "SYSTEM", {"symbol": run.symbol})
+        self.store.append(run.id, "OPPORTUNITY_DETECTED", "SYSTEM", {"symbol": run.symbol, "mode": mode})
         return run
 
     async def _run(self, run: WorkflowRun) -> None:
         try:
             self._transition(run, LifecycleState.INVESTIGATING, "SYSTEM", "Evidence collection started")
             run.market = await self.alpaca.market_context(run.symbol)
-            self._event(run, "MARKET_EVIDENCE", "ALPACA", run.market.model_dump(mode="json"))
+            self._event(run, "MARKET_EVIDENCE", "ALPACA_API", run.market.model_dump(mode="json"))
 
-            athena = await self.featherless.decide(
-                AgentRole.ATHENA, {"symbol": run.symbol, "market": run.market.model_dump(mode="json")}
+            run.mcp_calls, mcp_context = await self.mcp.research(run.symbol)
+            for call in run.mcp_calls:
+                self._event(run, "MCP_TOOL_CALL", "HERMES", call.model_dump(mode="json"))
+            if any(not call.success for call in run.mcp_calls):
+                self._reject(run, "MCP_RESEARCH_FAILED")
+                return
+            hermes = await self.featherless.hermes(
+                {"symbol": run.symbol, "calls": [call.model_dump(mode="json") for call in run.mcp_calls], "results": mcp_context}
+            )
+            run.decisions.append(hermes)
+            self._event(run, "AGENT_DECISION", "HERMES", hermes.model_dump(mode="json"))
+            if hermes.recommendation == "BLOCKED":
+                self._reject(run, "HERMES_RESEARCH_BLOCKED")
+                return
+
+            memories = [memory.model_dump(mode="json") for memory in self.store.list_memories(run.symbol)]
+            athena = await self.featherless.athena(
+                {"symbol": run.symbol, "market": run.market.model_dump(mode="json"), "mcp": mcp_context, "advisory_memory": memories}
             )
             run.decisions.append(athena)
             self._event(run, "AGENT_DECISION", "ATHENA", athena.model_dump(mode="json"))
             self._transition(run, LifecycleState.THESIS_CREATED, "ORCHESTRATOR", "Athena contract validated")
 
-            hades = await self.featherless.decide(
-                AgentRole.HADES, {"symbol": run.symbol, "athena": athena.model_dump(mode="json")}
-            )
-            run.decisions.append(hades)
-            self._event(run, "AGENT_DECISION", "HADES", hades.model_dump(mode="json"))
-            self._transition(run, LifecycleState.THESIS_CHALLENGED, "ORCHESTRATOR", "Hades critique recorded")
+            athena, hades = await self._challenge(run, athena, mcp_context)
+            if hades.recommendation == "REJECT":
+                self._reject(run, "REJECTED_BY_HADES")
+                return
+            if hades.recommendation != "CONTINUE":
+                self._reject(run, "HADES_REVISION_UNRESOLVED")
+                return
+            self._transition(run, LifecycleState.THESIS_CHALLENGED, "ORCHESTRATOR", "Hades objections resolved")
 
-            hermes = await self.featherless.decide(
-                AgentRole.HERMES,
-                {"symbol": run.symbol, "market": run.market.model_dump(mode="json"), "critique": hades.model_dump(mode="json")},
+            request = StrategyRequest(bias=athena.bias, risk_profile=run.risk_profile, thesis=athena.thesis)
+            family = self.strategy_engine.select_family(request)
+            legs = self.strategy_engine.build(run.market, request)
+            run.strategy, run.quant = self.quant.evaluate(
+                family,
+                athena.thesis,
+                athena.bias,
+                legs,
+                run.market.underlying_price,
+                run.market.observed_at,
+                self.settings.max_bid_ask_spread_pct,
             )
-            run.decisions.append(hermes)
-            run.strategy, run.quant = self._build_strategy(run, athena.summary)
-            self._event(run, "AGENT_DECISION", "HERMES", hermes.model_dump(mode="json"))
+            self._event(run, "STRATEGY_SELECTION", "STRATEGY_ENGINE", run.strategy.model_dump(mode="json"))
             self._event(run, "QUANT_CALCULATION", "QUANT_SERVICE", run.quant.model_dump(mode="json"))
-            self._transition(run, LifecycleState.STRATEGY_SELECTED, "ORCHESTRATOR", "Strategy normalized")
+            self._transition(run, LifecycleState.STRATEGY_SELECTED, "ORCHESTRATOR", "Deterministic strategy normalized")
 
-            morpheus = await self.featherless.decide(
-                AgentRole.MORPHEUS,
-                {"symbol": run.symbol, "strategy": run.strategy.model_dump(mode="json"), "quant": run.quant.model_dump(mode="json")},
-            )
-            run.decisions.append(morpheus)
-            self._event(run, "AGENT_DECISION", "MORPHEUS", morpheus.model_dump(mode="json"))
-            self._transition(run, LifecycleState.STRESS_TESTED, "ORCHESTRATOR", "Morpheus stress assessment recorded")
+            run.stress = self.stress.evaluate(run.strategy, run.quant)
+            self._event(run, "STRESS_TEST", "STRESS_ENGINE", run.stress.model_dump(mode="json"))
+            self._transition(run, LifecycleState.STRESS_TESTED, "ORCHESTRATOR", "Deterministic stress scenarios evaluated")
+            if run.stress.recommendation == "REJECT":
+                self._reject(run, "REJECTED_BY_STRESS_ENGINE")
+                return
 
-            run.risk = self._evaluate_risk(run)
+            run.risk = self._evaluate_risk(run, hades.recommendation, hermes.recommendation)
             self._event(run, "RISK_EVALUATION", "RISK_GOVERNOR", run.risk.model_dump(mode="json"))
             self._transition(run, LifecycleState.RISK_EVALUATED, "RISK_GOVERNOR", "Hard gates evaluated")
             if run.risk.decision != "APPROVE":
-                self._transition(run, LifecycleState.REJECTED, "RISK_GOVERNOR", ", ".join(run.risk.reason_codes))
-                run.status = "REJECTED"
+                self._reject(run, *run.risk.reason_codes)
                 return
 
             self._transition(run, LifecycleState.APPROVED, "RISK_GOVERNOR", "Every mandatory gate passed")
@@ -122,30 +171,21 @@ class WorkflowService:
             run.execution_guard = self._execution_guard(run)
             self._event(run, "EXECUTION_VALIDATION", "EXECUTION_GUARD", run.execution_guard.model_dump(mode="json"))
             if run.execution_guard.decision != "PASS":
-                self._transition(run, LifecycleState.REJECTED, "EXECUTION_GUARD", ", ".join(run.execution_guard.reason_codes))
-                run.status = "REJECTED"
+                self._reject(run, *run.execution_guard.reason_codes)
                 return
 
-            if not run.execute_requested:
-                run.status = "EXECUTION_READY"
-                self._event(run, "DRY_RUN_COMPLETE", "EXECUTION_SERVICE", {"message": "No broker mutation requested"})
+            if run.execute_requested:
+                await self._submit(run)
                 return
-
-            leg = run.strategy.legs[0]
-            if not self.store.reserve_execution(run.execution_guard.idempotency_key, run.id):
-                self._transition(run, LifecycleState.REJECTED, "EXECUTION_GUARD", "DUPLICATE_ORDER_INTENT")
-                run.status = "REJECTED"
+            if run.mode == "fixture" and run.simulate_lifecycle:
+                await self._simulate_lifecycle(run)
                 return
-            run.broker_order = await self.alpaca.submit(
-                leg.contract_symbol, leg.quantity, leg.limit_price, run.execution_guard.idempotency_key
-            )
-            self._event(run, "BROKER_ORDER", "EXECUTION_SERVICE", run.broker_order)
-            self._transition(run, LifecycleState.SUBMITTED, "EXECUTION_SERVICE", "Alpaca accepted paper order")
-            run.status = "SUBMITTED"
-        except IntegrationError as exc:
+            run.status = "EXECUTION_READY"
+            self._event(run, "DRY_RUN_COMPLETE", "EXECUTION_SERVICE", {"message": "No broker mutation requested"})
+        except (IntegrationError, StrategyError) as exc:
             run.error = str(exc)
             run.status = "FAILED"
-            self._fail(run, "DEPENDENCY_FAILURE", str(exc))
+            self._fail(run, "CONTROLLED_FAILURE", str(exc))
         except Exception as exc:
             run.error = f"Unexpected workflow error: {exc}"
             run.status = "FAILED"
@@ -154,54 +194,117 @@ class WorkflowService:
             run.updated_at = utc_now()
             self.store.save_run(run)
 
-    def _build_strategy(self, run: WorkflowRun, thesis: str) -> tuple[Strategy, QuantMetrics]:
-        assert run.market is not None
-        midpoint = round((run.market.bid + run.market.ask) / 2, 2)
-        spread_pct = round((run.market.ask - run.market.bid) / midpoint * 100, 2)
-        quantity = 1
-        premium = round(run.market.ask * 100 * quantity, 2)
-        data_age = max(0.0, (utc_now() - run.market.observed_at).total_seconds())
-        leg = OptionLeg(
-            contract_symbol=run.market.option_symbol,
-            underlying_symbol=run.symbol,
-            option_type="CALL",
-            expiration=run.market.expiration,
-            strike=run.market.strike,
-            side="BUY",
-            quantity=quantity,
-            ratio=1,
-            position_intent="OPEN",
-            limit_price=midpoint,
+    async def _challenge(
+        self,
+        run: WorkflowRun,
+        athena: AthenaDecision,
+        mcp_context: dict[str, Any],
+    ) -> tuple[AthenaDecision, HadesDecision]:
+        hades = await self.featherless.hades({"symbol": run.symbol, "athena": athena.model_dump(mode="json"), "mcp": mcp_context})
+        run.decisions.append(hades)
+        self._event(run, "AGENT_DECISION", "HADES", hades.model_dump(mode="json"))
+        if hades.recommendation != "REVISE":
+            return athena, hades
+        revised = await self.featherless.athena(
+            {"symbol": run.symbol, "previous_thesis": athena.model_dump(mode="json"), "required_revision": hades.model_dump(mode="json")}
         )
-        strategy = Strategy(
-            thesis=thesis,
-            legs=[leg],
-            net_debit=premium,
-            max_loss=premium,
-            break_even=[round(run.market.strike + midpoint, 2)],
+        run.decisions.append(revised)
+        self._event(run, "THESIS_REVISION", "ATHENA", revised.model_dump(mode="json"))
+        rereview = await self.featherless.hades(
+            {"symbol": run.symbol, "athena": revised.model_dump(mode="json"), "previous_objections": hades.model_dump(mode="json")}
         )
-        quant = QuantMetrics(
-            midpoint=midpoint,
-            spread_pct=spread_pct,
-            premium=premium,
-            max_loss=premium,
-            position_quantity=quantity,
-            data_age_seconds=round(data_age, 3),
-        )
-        return strategy, quant
+        run.decisions.append(rereview)
+        self._event(run, "AGENT_DECISION", "HADES", rereview.model_dump(mode="json"))
+        return revised, rereview
 
-    def _evaluate_risk(self, run: WorkflowRun) -> RiskEvaluation:
-        assert run.market and run.quant and run.strategy
+    async def _submit(self, run: WorkflowRun) -> None:
+        assert run.execution_guard and run.strategy
+        if not self.store.reserve_execution(run.execution_guard.idempotency_key, run.id):
+            self._reject(run, "DUPLICATE_ORDER_INTENT")
+            return
+        run.broker_order = await self.alpaca.submit_strategy(run.strategy, run.execution_guard.idempotency_key)
+        self._event(run, "BROKER_ORDER", "EXECUTION_SERVICE", run.broker_order)
+        self._transition(run, LifecycleState.SUBMITTED, "EXECUTION_SERVICE", "Alpaca accepted paper order")
+        run.status = "SUBMITTED"
+
+    async def _simulate_lifecycle(self, run: WorkflowRun) -> None:
+        assert run.strategy and run.quant
+        run.broker_order = {
+            "broker": "fixture",
+            "order_id": f"sim-{run.id[:8]}",
+            "client_order_id": run.execution_guard.idempotency_key if run.execution_guard else None,
+            "status": "filled",
+            "simulated": True,
+        }
+        self._event(run, "SIMULATION_STARTED", "FIXTURE_SIMULATOR", {"broker_mutation": False})
+        self._transition(run, LifecycleState.SUBMITTED, "FIXTURE_SIMULATOR", "Simulated order accepted; no broker called")
+        self._transition(run, LifecycleState.FILLED, "FIXTURE_SIMULATOR", "Simulated fill recorded")
+        now = utc_now()
+        run.position = PositionState(
+            status="OPEN",
+            quantity=run.strategy.quantity,
+            entry_value=run.strategy.net_debit or run.strategy.max_loss,
+            current_value=run.strategy.net_debit or run.strategy.max_loss,
+            opened_at=now,
+            simulated=True,
+        )
+        self._event(run, "POSITION_SNAPSHOT", "POSITION_SERVICE", run.position.model_dump(mode="json"))
+        self._transition(run, LifecycleState.POSITION_OPEN, "POSITION_SERVICE", "Simulated position opened")
+        run.position.status = "MONITORING"
+        simulated_pnl = round(min(run.strategy.max_profit or run.strategy.max_loss, run.strategy.max_loss * 0.18), 2)
+        run.position.current_value = round(run.position.entry_value + simulated_pnl, 2)
+        run.position.unrealized_pnl = simulated_pnl
+        self._transition(run, LifecycleState.POSITION_MONITORING, "POSITION_SERVICE", "Single deterministic fixture snapshot evaluated")
+        self._event(run, "POSITION_SNAPSHOT", "POSITION_SERVICE", run.position.model_dump(mode="json"))
+        self._transition(run, LifecycleState.EXIT_SIGNAL, "EXIT_POLICY", "Fixture profit target reached")
+        self._transition(run, LifecycleState.EXIT_EXECUTION, "EXECUTION_SERVICE", "Simulated close intent validated; no broker called")
+        run.position.status = "CLOSED"
+        run.position.realized_pnl = simulated_pnl
+        run.position.unrealized_pnl = 0
+        run.position.closed_at = utc_now()
+        self._transition(run, LifecycleState.POSITION_CLOSED, "POSITION_SERVICE", "Simulated position closed")
+        self._event(run, "POSITION_CLOSED", "POSITION_SERVICE", run.position.model_dump(mode="json"))
+        self._transition(run, LifecycleState.AUTOPSY, "ORCHESTRATOR", "Immutable trade record ready for autopsy")
+        run.autopsy = await self.featherless.morpheus(
+            {
+                "symbol": run.symbol,
+                "thesis": run.strategy.thesis,
+                "decisions": [decision.model_dump(mode="json") for decision in run.decisions],
+                "strategy": run.strategy.model_dump(mode="json"),
+                "stress": run.stress.model_dump(mode="json") if run.stress else None,
+                "risk": run.risk.model_dump(mode="json") if run.risk else None,
+                "position": run.position.model_dump(mode="json"),
+            }
+        )
+        run.decisions.append(run.autopsy)
+        self._event(run, "TRADE_AUTOPSY", "MORPHEUS", run.autopsy.model_dump(mode="json"))
+        run.memory = LearningMemory(
+            id=str(uuid.uuid4()),
+            source_run_id=run.id,
+            symbol=run.symbol,
+            lessons=run.autopsy.lessons,
+            confidence=run.autopsy.confidence,
+        )
+        self.store.save_memory(run.memory)
+        self._event(run, "LEARNING_MEMORY", "MEMORY_SERVICE", run.memory.model_dump(mode="json"))
+        self._transition(run, LifecycleState.LEARNED, "ORCHESTRATOR", "Advisory-only memory stored")
+        run.status = "LEARNED"
+
+    def _evaluate_risk(self, run: WorkflowRun, hades_recommendation: str, hermes_recommendation: str) -> RiskEvaluation:
+        assert run.market and run.quant and run.strategy and run.stress
         now = utc_now()
         gates = [
             GateResult(code="PAPER_MODE", passed=self.settings.trading_mode == "paper", measured=self.settings.trading_mode, limit="paper"),
             GateResult(code="KILL_SWITCH", passed=not self.kill_switch, measured=self.kill_switch, limit=False),
             GateResult(code="ACCOUNT_ACTIVE", passed="ACTIVE" in run.market.account_status, measured=run.market.account_status, limit="ACTIVE"),
+            GateResult(code="HADES_CONTINUE", passed=hades_recommendation == "CONTINUE", measured=hades_recommendation, limit="CONTINUE"),
+            GateResult(code="HERMES_READY", passed=hermes_recommendation == "READY", measured=hermes_recommendation, limit="READY"),
+            GateResult(code="STRESS_ACCEPTABLE", passed=run.stress.recommendation != "REJECT", measured=run.stress.recommendation, limit="PASS or CAUTION"),
             GateResult(code="DATA_FRESH", passed=run.quant.data_age_seconds <= self.settings.max_market_data_age_seconds, measured=run.quant.data_age_seconds, limit=self.settings.max_market_data_age_seconds),
             GateResult(code="MAX_TRADE_LOSS", passed=run.quant.max_loss <= self.settings.max_trade_loss, measured=run.quant.max_loss, limit=self.settings.max_trade_loss),
-            GateResult(code="SPREAD", passed=run.quant.spread_pct <= self.settings.max_bid_ask_spread_pct, measured=run.quant.spread_pct, limit=self.settings.max_bid_ask_spread_pct),
+            GateResult(code="LIQUIDITY", passed=run.quant.liquidity_passed, measured=run.quant.max_spread_pct, limit=self.settings.max_bid_ask_spread_pct),
             GateResult(code="QUANTITY", passed=run.quant.position_quantity <= self.settings.max_position_quantity, measured=run.quant.position_quantity, limit=self.settings.max_position_quantity),
-            GateResult(code="BUYING_POWER", passed=run.quant.max_loss <= run.market.buying_power, measured=run.quant.max_loss, limit=run.market.buying_power),
+            GateResult(code="BUYING_POWER", passed=run.quant.exposure <= run.market.buying_power, measured=run.quant.exposure, limit=run.market.buying_power),
         ]
         reasons = [gate.code for gate in gates if not gate.passed]
         return RiskEvaluation(
@@ -213,17 +316,25 @@ class WorkflowService:
         )
 
     def _execution_guard(self, run: WorkflowRun) -> ExecutionValidation:
-        assert run.risk and run.market and run.strategy
-        frozen_hash = uuid.uuid5(uuid.NAMESPACE_URL, run.strategy.model_dump_json()).hex[:20]
-        idempotency_key = f"oracle-x-{run.id[:12]}-{frozen_hash[:8]}"
+        assert run.risk and run.market and run.strategy and run.quant
+        strategy_hash = uuid.uuid5(uuid.NAMESPACE_URL, run.strategy.model_dump_json()).hex
+        idempotency_key = f"oracle-x-{run.id[:8]}-{strategy_hash[:10]}"
+        structure_valid = True
+        try:
+            self.strategy_engine.validate(run.strategy.strategy_type, run.strategy.legs)
+        except StrategyError:
+            structure_valid = False
         checks = [
             GateResult(code="EXECUTION_READY", passed=run.state == LifecycleState.EXECUTION_READY, measured=run.state.value, limit="EXECUTION_READY"),
             GateResult(code="APPROVAL_VALID", passed=run.risk.expires_at > utc_now(), measured=run.risk.expires_at.isoformat(), limit="future"),
             GateResult(code="RISK_APPROVED", passed=run.risk.decision == "APPROVE", measured=run.risk.decision, limit="APPROVE"),
+            GateResult(code="STRATEGY_VALID", passed=structure_valid, measured=run.strategy.strategy_type.value, limit="normalized defined risk"),
+            GateResult(code="QUANT_MATCH", passed=run.strategy.max_loss == run.quant.max_loss, measured=run.strategy.max_loss, limit=run.quant.max_loss),
             GateResult(code="KILL_SWITCH", passed=not self.kill_switch, measured=self.kill_switch, limit=False),
             GateResult(code="PAPER_ENDPOINT", passed=self.settings.is_paper_endpoint, measured=self.settings.alpaca_trading_base_url, limit="https://paper-api.alpaca.markets"),
             GateResult(code="LIVE_EVIDENCE_FOR_MUTATION", passed=(not run.execute_requested or run.market.source == "alpaca"), measured=run.market.source, limit="alpaca when executing"),
             GateResult(code="LIVE_INFERENCE_FOR_MUTATION", passed=(not run.execute_requested or all(decision.provider == "featherless" for decision in run.decisions)), measured=sorted({decision.provider for decision in run.decisions}), limit="featherless when executing"),
+            GateResult(code="MCP_RESEARCH_FOR_MUTATION", passed=(not run.execute_requested or bool(self.settings.mcp_server_url) and all(call.success for call in run.mcp_calls)), measured={"configured": bool(self.settings.mcp_server_url), "successful_calls": sum(call.success for call in run.mcp_calls)}, limit="configured with all research calls successful when executing"),
             GateResult(code="EXECUTION_ENABLED", passed=(not run.execute_requested or self.settings.execution_enabled), measured=self.settings.execution_enabled, limit=True if run.execute_requested else "not required"),
         ]
         reasons = [check.code for check in checks if not check.passed]
@@ -232,12 +343,17 @@ class WorkflowService:
             reason_codes=reasons,
             checks=checks,
             idempotency_key=idempotency_key,
+            strategy_hash=strategy_hash,
             validated_at=utc_now(),
         )
 
+    def set_kill_switch(self, active: bool, reason: str, actor: str = "OPERATOR") -> bool:
+        self.kill_switch = active
+        self.store.append_system("KILL_SWITCH_CHANGED", actor, {"active": active, "reason": reason})
+        return self.kill_switch
+
     def _transition(self, run: WorkflowRun, new_state: LifecycleState, actor: str, reason: str) -> None:
-        allowed = ALLOWED_TRANSITIONS.get(run.state, set())
-        if new_state not in allowed:
+        if new_state not in ALLOWED_TRANSITIONS.get(run.state, set()):
             self._event(run, "STATE_TRANSITION_REJECTED", actor, {"from": run.state.value, "to": new_state.value, "reason": reason})
             raise RuntimeError(f"Invalid transition {run.state.value} -> {new_state.value}")
         previous = run.state
@@ -245,6 +361,12 @@ class WorkflowService:
         run.updated_at = utc_now()
         self._event(run, "STATE_TRANSITION", actor, {"from": previous.value, "to": new_state.value, "reason": reason})
         self.store.save_run(run)
+
+    def _reject(self, run: WorkflowRun, *reason_codes: str) -> None:
+        reason = ", ".join(reason_codes) or "REJECTED"
+        self._transition(run, LifecycleState.REJECTED, "ORCHESTRATOR", reason)
+        run.status = "REJECTED"
+        self._event(run, "WORKFLOW_REJECTED", "ORCHESTRATOR", {"reason_codes": list(reason_codes)})
 
     def _fail(self, run: WorkflowRun, code: str, reason: str) -> None:
         if LifecycleState.FAILED in ALLOWED_TRANSITIONS.get(run.state, set()):

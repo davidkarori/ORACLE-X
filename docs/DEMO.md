@@ -21,7 +21,7 @@ ALPACA_API_KEY=...
 ALPACA_API_SECRET=...
 ```
 
-Leave all paper and execution safety settings at their defaults. A connected run uses Featherless for four typed advisory decisions and Alpaca for account, stock and options evidence.
+Leave all paper and execution safety settings at their defaults. A connected run uses Featherless for typed committee decisions, Alpaca API for account/stock/options evidence, and Alpaca MCP for visibly audited read-only stock, option and news research.
 
 ## Paper execution
 
@@ -41,7 +41,9 @@ The adapter uses a deterministic `client_order_id` and records the intent before
 
 ## Read-only Alpaca MCP
 
-The sample configuration at `config/alpaca-mcp.readonly.json` starts Alpaca's official MCP server with only `account`, `assets`, `stock-data`, `options-data` and `news` toolsets. The `trading` toolset is deliberately absent, so agents cannot receive order mutation tools.
+The sample configuration at `config/alpaca-mcp.readonly.json` starts Alpaca's official MCP server with only `assets`, `stock-data`, `options-data` and `news` toolsets. The mutation-capable `trading`, `watchlists` and account-configuration tools are deliberately absent. The application also enforces an exact read-tool allowlist.
+
+Fixture mode can safely demonstrate the complete lifecycle through `LEARNED`. Its simulated submission, fill, position and exit events are explicitly marked and never contact Alpaca.
 
 ## CLI evidence
 

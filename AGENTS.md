@@ -24,8 +24,8 @@ Featherless is the first-class LLM inference provider.
 Four agents:
 - ATHENA — opportunity/market intelligence.
 - HADES — adversarial critic.
-- HERMES — options strategy structurer.
-- MORPHEUS — stress tester.
+- HERMES — coordination, messaging and auditable MCP research mediation.
+- MORPHEUS — post-trade autopsy and advisory learning.
 
 LLMs interpret evidence and produce structured decisions. They do NOT own deterministic financial calculations.
 
@@ -121,7 +121,7 @@ Use JSON structured output from Featherless.
 
 ## 7. Quantitative integrity
 
-Python/application code calculates exact quantities: indicators, returns, volatility, IV, Greeks, spreads, reward/risk, exposure, P&L and position sizing.
+Python/application code selects and validates strategy families, runs stress scenarios, and calculates exact quantities: indicators, returns, volatility, IV, Greeks, spreads, reward/risk, exposure, P&L and position sizing.
 
 The model may interpret these values, compare evidence and explain them.
 

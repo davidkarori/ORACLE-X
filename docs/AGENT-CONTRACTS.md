@@ -23,26 +23,30 @@ Produces strongest counterarguments, missing evidence, contradiction signals, th
 Must not execute.
 
 ## HERMES
-Role: options strategy structurer.
+Role: coordination and auditable tool mediator.
 
-Question: “Given the surviving thesis, what is the best defined-risk expression?”
+Question: “Is the research complete, traceable and safe to pass into the committee?”
 
-Consumes surviving thesis, options chain/snapshot, deterministic Greeks/IV/liquidity and account/risk constraints.
+Consumes allowlisted read-only MCP call results and their audit metadata.
 
-Produces strategy type, explicit option legs, entry assumptions, max risk, target/reward, invalidation and rationale.
+Produces a research summary, tool references, data gaps and a READY/BLOCKED recommendation.
 
-Must not execute.
+Must not choose authoritative quantities, approve risk or execute.
 
 ## MORPHEUS
-Role: stress tester.
+Role: post-trade autopsy and learning.
 
-Question: “Under what scenarios does the trade break?”
+Question: “What should future committees learn from this completed outcome?”
 
-Consumes proposed strategy and deterministic scenario inputs.
+Consumes the immutable thesis, objections, deterministic strategy/stress/risk records and final position outcome.
 
-Produces stress scenarios, expected behavior, loss/risk observations, failure conditions, resilience score and recommendation.
+Produces what worked, what failed, wrong assumptions, lessons and a RETAIN/REVISE/RETIRE recommendation.
 
-Must not execute.
+Must not alter history, approve future trades or execute. Stored memory is advisory only.
+
+## Deterministic strategy and stress services
+
+The Strategy Engine selects and validates supported structures from the surviving typed thesis and risk profile. The Quant Service calculates every execution-critical value. The Stress Engine generates scenario P&L, break conditions, severity and PASS/CAUTION/REJECT without LLM arithmetic.
 
 ## Shared contract requirements
 

@@ -2,7 +2,7 @@
 
 ## Short description
 
-ORACLE X is a safety-first AI options committee. Four specialized models build, challenge, structure and stress-test a trade, while deterministic software alone controls risk approval and Alpaca paper execution.
+ORACLE X is a safety-first AI options committee. Specialized models gather evidence, build and challenge a thesis, and learn from outcomes, while deterministic software structures and stress-tests the trade and alone controls risk approval and Alpaca paper execution.
 
 ## Problem
 
@@ -10,25 +10,25 @@ Most AI trading demos allow one probabilistic model to generate both the idea an
 
 ## AI logic
 
-Athena creates an evidence-backed thesis. Hades attacks its assumptions. Hermes proposes a defined-risk options expression. Morpheus interprets deterministic stress results. Each Featherless response is schema-validated and recorded with its provider, model, confidence and trace identifier. Invalid or unavailable inference fails closed.
+Hermes mediates auditable read-only MCP research. Athena creates an evidence-backed thesis, and Hades may continue, require one revision or reject it. Deterministic services then select, validate, price and stress the options structure. After a closed position, Morpheus creates an immutable autopsy and advisory-only memory. Each Featherless response is schema-validated; invalid or unavailable inference fails closed.
 
 ## Deterministic controls
 
-Application code normalizes the option leg and calculates premium, spread, maximum loss, break-even, position quantity and data age. The Risk Governor checks paper mode, kill switch, account state, evidence freshness, loss, liquidity, quantity and buying power. Its approval expires.
+Application code supports long calls, long puts, bull call spreads, bear put spreads and iron condors. It normalizes every leg and calculates debit/credit, spread, maximum loss/profit, break-even, quantity, exposure, scenario P&L and data age. The Risk Governor checks paper mode, kill switch, committee status, account state, evidence freshness, loss, liquidity, quantity and buying power. Its approval expires.
 
 Immediately before submission, the Execution Guard rechecks lifecycle state, approval, kill switch, paper endpoint, evidence source and execution configuration. A durable idempotency reservation prevents duplicate intent. No agent class imports or calls the broker submission method.
 
 ## Alpaca infrastructure
 
-ORACLE X reads account, stock and options evidence from Alpaca. Its official MCP configuration excludes the entire trading toolset and exposes only account, assets, stock data, options data and news. Alpaca CLI is used for read-only diagnostics. The deterministic execution adapter is the only component capable of calling the Alpaca Trading API, and it rejects every non-paper endpoint during application startup.
+ORACLE X reads account, stock and options evidence from Alpaca's APIs. Its MCP configuration excludes mutation-capable toolsets and exposes only assets, stock data, options data and news through an additional exact allowlist. Alpaca CLI is used for read-only diagnostics. The deterministic execution adapter is the only component capable of calling the Alpaca Trading API, and it rejects every non-paper endpoint during application startup.
 
 ## Options strategy
 
-The emergency submission demonstrates a long call: a first-class options leg with contract symbol, underlying, strike, expiration, side, quantity, ratio, intent and limit price. Maximum loss is bounded to premium paid. The domain contract is leg-based so spreads and other combinations can be added without giving models authority over quantities or prices.
+The submission supports long calls, long puts, bull call spreads, bear put spreads and iron condors. Every leg records contract symbol, underlying, strike, expiration, side, quantity, ratio, intent, market prices and available Greeks. Naked short structures are rejected, and no model receives authority over quantities or prices.
 
 ## Audit and replay
 
-Every opportunity, state transition, market snapshot, agent decision, quantitative result, risk verdict, execution validation and broker action is appended to an immutable event timeline. The War Room reconstructs why a trade was permitted or blocked from one replay endpoint.
+Every opportunity, MCP call, state transition, market snapshot, agent decision, quantitative result, risk verdict, execution validation and broker action is appended to an immutable event timeline. The War Room reconstructs why a trade was permitted or blocked from one replay endpoint, and the lifecycle can continue through position close, autopsy and learning.
 
 ## Safety posture
 

@@ -31,6 +31,8 @@ DETECTED → INVESTIGATING → THESIS_CREATED → THESIS_CHALLENGED → STRATEGY
 
 Agent/external dependency failures can lead to FAILED where appropriate. Risk Governor can lead to REJECTED.
 
+Fixture mode may simulate the post-submission path for demonstration. Every simulated event is marked and no broker request is made. Connected execution stops at SUBMITTED until real broker reconciliation confirms later states.
+
 ## Invariants
 
 - No transition without evidence.

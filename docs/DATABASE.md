@@ -2,7 +2,7 @@
 
 PostgreSQL/Supabase is the source of truth.
 
-Canonical migration: `supabase/migrations/001_initial_schema.sql`
+Migrations are applied in numeric order under `supabase/migrations/`. Migration `003_runtime_persistence.sql` adds runtime workflow snapshots, unique execution intents, globally ordered events and append-only learning memory without rewriting the original schema.
 
 ## Canonical tables
 
@@ -25,6 +25,8 @@ Canonical migration: `supabase/migrations/001_initial_schema.sql`
 - trade_autopsies
 - oracle_memory
 - system_state
+- workflow_runs
+- execution_intents
 
 ## Important audit data
 

@@ -6,7 +6,7 @@
 
 ORACLE X is an autonomous, multi-agent AI trading intelligence system built for the **Alpaca AI Trading Agents Hackathon**.
 
-Instead of trusting a single AI model to make a trading decision, ORACLE X creates an investment committee where specialized agents reason about an opportunity, challenge assumptions, construct a defined-risk options strategy, and stress-test the proposal.
+Instead of trusting a single AI model to make a trading decision, ORACLE X creates an investment committee where specialized agents gather evidence, reason about an opportunity, challenge assumptions, and learn from completed outcomes. Deterministic services construct and stress-test the options strategy.
 
 A deterministic **Risk Governor** then decides whether the proposed trade is actually allowed to reach the market.
 
@@ -18,17 +18,17 @@ A deterministic **Risk Governor** then decides whether the proposed trade is act
 |---|---|---|
 | **ATHENA** | Opportunity Intelligence | Is there an interesting opportunity? |
 | **HADES** | Adversarial Critic | Assume Athena is wrong. Why? |
-| **HERMES** | Options Strategist | What is the best defined-risk expression? |
-| **MORPHEUS** | Stress Tester | Under what scenarios does the trade break? |
+| **HERMES** | Research Coordinator | Is the evidence complete, traceable and safe to use? |
+| **MORPHEUS** | Trade Autopsy | What should future committees learn from the outcome? |
 
 ## Safety Architecture
 
 ```text
-Market Evidence
+Alpaca API + read-only MCP evidence
       ↓
-ATHENA → HADES → HERMES → MORPHEUS
+HERMES mediation → ATHENA thesis → HADES challenge
       ↓
-Structured Contracts
+Deterministic strategy, quant and stress services
       ↓
 Deterministic Risk Governor
       ↓
@@ -37,6 +37,8 @@ Execution Guard
 Alpaca Execution Adapter
       ↓
 Alpaca
+      ↓
+Position lifecycle → MORPHEUS autopsy → advisory memory
 ```
 
 **No LLM may directly place, modify or cancel an order.**
@@ -66,9 +68,7 @@ ATHENA Thesis
   ↓
 HADES Critique
   ↓
-HERMES Strategy
-  ↓
-MORPHEUS Stress Test
+Deterministic Strategy + Stress Test
   ↓
 Risk Evaluation
   ↓
@@ -76,7 +76,7 @@ Execution
   ↓
 Outcome
   ↓
-Trade Autopsy
+MORPHEUS Trade Autopsy
   ↓
 Learning
 ```
@@ -85,11 +85,11 @@ The system is designed to answer **why a trade was made, why it was rejected, an
 
 ## Repository
 
-See `AGENTS.md` for the non-negotiable engineering contract and `CODEX-INSTRUCTIONS.md` for the implementation handoff. The canonical database migration is under `supabase/migrations/001_initial_schema.sql`.
+See `AGENTS.md` for the non-negotiable engineering contract and `CODEX-INSTRUCTIONS.md` for the implementation handoff. Database migrations are applied in order from `supabase/migrations/`.
 
 ## Current status
 
-A working hackathon vertical slice is implemented. It includes a FastAPI service, typed committee contracts, Featherless and Alpaca adapters, a deterministic state machine, options normalization, quantitative checks, Risk Governor, Execution Guard, idempotent paper-order intent, append-only replay and the War Room interface.
+A working hackathon vertical slice is implemented. It includes typed Featherless contracts, visible read-only Alpaca MCP research, five deterministic options strategies, quantitative and stress calculations, a full replayable lifecycle through autopsy and learning, SQLite/PostgreSQL persistence, Risk Governor, Execution Guard, idempotent paper-order intent and the War Room interface.
 
 ## Judge quick links
 
