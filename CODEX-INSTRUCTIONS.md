@@ -1,312 +1,235 @@
-# Codex Instructions For ORACLE X
+# Exact Codex Handoff Prompt
 
-These instructions apply to every Codex session working in this repository.
+You are taking over implementation of **ORACLE X**, an autonomous AI trading intelligence committee for the Alpaca AI Trading Agents Hackathon.
 
-ORACLE X is a trading intelligence and execution-control system. Treat it as safety-sensitive software. Do not assume agent reasoning is sufficient for trading decisions or broker execution.
+This repository contains the authoritative engineering contract.
 
-## Required Read Order
+## FIRST: DO NOT CODE BLINDLY
 
-Before implementation work, read:
+Before writing implementation code:
 
-1. `AGENTS.md`
-2. `README.md`
-3. `CODEX-INSTRUCTIONS.md`
-4. Files under `docs/`
-5. Supabase migrations
-6. `.env.example`
-7. `.gitignore`
+1. Read `AGENTS.md` completely.
+2. Read every document in `docs/`.
+3. Inspect the entire repository and identify what already exists.
+4. Do not discard existing work without proving it is obsolete.
+5. Produce a short implementation audit:
+   - what exists;
+   - what is missing;
+   - what conflicts with the docs;
+   - what should be built first.
 
-If any required file is missing, report that before proceeding.
+Do not ask for permission for routine implementation decisions that are already specified by the docs.
 
-## Prime Safety Rule
+## Authoritative architecture
 
-No LLM, AI agent, MCP tool call initiated by an agent, or agent-authored workflow may directly place, modify, or cancel an Alpaca order.
+- Featherless = LLM inference layer.
+- ATHENA = opportunity intelligence.
+- HADES = adversarial critic.
+- HERMES = options strategy structurer.
+- MORPHEUS = stress tester.
+- Alpaca MCP = agent-facing research/tool access.
+- Alpaca Trading API = controlled execution.
+- Alpaca CLI = operational automation/diagnostics/reconciliation.
+- Risk Governor = deterministic hard safety boundary.
+- Execution Guard = final mechanical gate.
+- PostgreSQL/Supabase = source of truth.
+- Paper trading = required during development/demo.
 
-Order execution may happen only through deterministic application code after:
+## Implementation order
 
-1. Valid opportunity lifecycle state.
-2. Deterministic quantitative calculations.
-3. Risk Governor approval.
-4. Execution Guard validation.
-5. Idempotent execution service submission through the Alpaca Trading API.
+Execute in this order unless repository inspection reveals an existing equivalent:
 
-If a requested change weakens this rule, stop and ask for explicit approval.
+### Phase 1 — Foundation
+- establish Python backend;
+- establish frontend shell;
+- establish configuration/environment validation;
+- establish structured logging;
+- establish database connection;
+- establish migration workflow.
 
-## Implementation Discipline
+### Phase 2 — Domain contracts
+Implement Pydantic/domain models for:
+- opportunities;
+- agent decisions;
+- option strategies/legs;
+- trades;
+- risk evaluations;
+- orders;
+- execution events;
+- positions;
+- lifecycle events.
 
-When asked to implement:
+### Phase 3 — State machine
+Implement the canonical state machine in `docs/STATE-MACHINE.md`.
 
-- Inspect the existing repository before editing.
-- Preserve the architecture in `AGENTS.md`.
-- Keep changes scoped.
-- Prefer explicit types and schemas for trading data.
-- Prefer deterministic services for calculations and control decisions.
-- Persist audit records for important decisions and external interactions.
-- Add tests for state, risk, execution, broker, and schema behavior.
-- Do not redesign the stack without explicit approval.
-- Do not introduce direct broker execution paths from agent code.
-- Do not put secrets in source files.
+Requirements:
+- explicit allowed transitions;
+- invalid transition rejection;
+- evidence requirement;
+- event emission;
+- tests.
 
-## Agent Authority
+### Phase 4 — Featherless adapter
+Implement a provider abstraction and Featherless adapter.
 
-Agents may:
+Requirements:
+- OpenAI-compatible endpoint;
+- server-side API key;
+- structured JSON output;
+- timeout/error handling;
+- inference trace persistence;
+- provider/model/prompt/version metadata;
+- no execution authority.
 
-- Investigate opportunities.
-- Draft theses.
-- Challenge theses.
-- Summarize market evidence.
-- Request deterministic calculations.
-- Recommend strategies.
-- Explain deterministic outputs.
-- Record reasoning for audit.
-- Analyze completed trades.
+### Phase 5 — Agent runtime
+Implement Athena, Hades, Hermes and Morpheus as typed agent services.
 
-Agents must not:
+Start with deterministic/mock evidence fixtures so tests do not depend on live APIs.
 
-- Approve risk.
-- Submit, modify, or cancel orders.
-- Override Risk Governor decisions.
-- Override Execution Guard decisions.
-- Invent authoritative quantitative values.
-- Mutate lifecycle state directly.
-- Bypass audit logging.
+Then connect live Featherless inference.
 
-## Deterministic Services
+### Phase 6 — Alpaca MCP integration
+Implement an MCP client/tool layer with explicit per-agent allowlists.
 
-The following must be deterministic application code:
+Agents must never receive execution tools.
 
-- Indicators
-- Returns
-- Realized volatility
-- Implied volatility
-- Greeks
-- Spreads
-- Reward/risk
-- Exposure
-- P&L
-- Position sizing
-- Stress calculations
-- Risk Governor decisions
-- Execution Guard decisions
-- Broker submission
-- Position reconciliation
+Record MCP tool calls in `mcp_tool_calls`.
 
-LLMs can narrate or interpret results, but they are not the source of truth.
+### Phase 7 — Quantitative services
+Implement deterministic calculation modules.
 
-## State Machine Requirements
+Do not ask the LLM to calculate execution-critical values.
 
-Opportunity state must follow an explicit lifecycle.
+All important calculations require tests.
 
-Expected happy path:
+### Phase 8 — Risk Governor
+Implement deterministic policy evaluation.
 
-```text
-DETECTED
--> INVESTIGATING
--> THESIS_CREATED
--> THESIS_CHALLENGED
--> STRATEGY_SELECTED
--> STRESS_TESTED
--> RISK_EVALUATED
--> APPROVED
--> EXECUTION_READY
--> SUBMITTED
--> FILLED
--> POSITION_OPEN
--> POSITION_MONITORING
--> EXIT_SIGNAL
--> EXIT_EXECUTION
--> POSITION_CLOSED
--> AUTOPSY
--> LEARNED
-```
+Every gate returns structured reason codes and measured values.
 
-State transitions must be:
+Write unit tests for pass/boundary/fail cases.
 
-- Enforced in application code.
-- Persisted to the database.
-- Auditable.
-- Idempotent where needed.
-- Rejected when invalid.
-
-Expected failure or rejection states include:
-
-- `REJECTED_BY_HADES`
-- `REJECTED_BY_RISK`
-- `REJECTED_BY_EXECUTION_GUARD`
-- `DATA_STALE`
-- `BROKER_UNAVAILABLE`
-- `KILL_SWITCH_ACTIVE`
-- `EXECUTION_FAILED`
-- `CANCELLED`
-- `EXPIRED`
-
-## Risk Governor Requirements
-
-The Risk Governor must be deterministic and fail closed.
-
-It should evaluate:
-
-- System hard limits
-- Per-trade max loss
-- Daily loss
-- Portfolio exposure
-- Position sizing
-- Concentration
-- Liquidity
-- Options max loss
-- Data freshness
-- Broker health
-- Account status
-- Existing positions
-- Pending orders
-- Kill switch status
-
-Risk evaluations must be durable, machine-readable, and linked to the opportunity.
-
-## Execution Guard Requirements
-
-The Execution Guard runs immediately before broker submission.
+### Phase 9 — Execution Guard
+Implement final validation.
 
 It must verify:
+- approved state;
+- valid strategy;
+- successful risk evaluation;
+- paper mode;
+- fresh evidence;
+- no position mismatch;
+- no duplicate order;
+- system ACTIVE.
 
-- Opportunity state is `EXECUTION_READY`.
-- Risk approval is present, valid, and unexpired.
-- Kill switch is inactive.
-- Broker/account status is healthy.
-- Market/session conditions permit execution.
-- Market data is fresh.
-- Final order matches the approved strategy.
-- All legs are valid.
-- Buying power and max loss still pass.
-- No duplicate active order exists.
-- Idempotency key is valid.
-- Execution validation has been audited.
+### Phase 10 — Alpaca execution adapter
+Only this adapter can submit orders.
 
-Any failure blocks submission.
+Implement:
+- client_order_id;
+- order persistence;
+- submission;
+- broker confirmation;
+- reconciliation;
+- safe retry behavior.
 
-## Alpaca Usage
+Unknown order status must never be blindly retried.
 
-Use Alpaca integrations according to this split:
+### Phase 11 — Event/audit/replay
+Persist all major lifecycle events.
 
-- Alpaca MCP: controlled, auditable context/tool access only.
-- Alpaca Trading API: deterministic runtime execution path only.
-- Alpaca CLI: development, diagnostics, and manual operations only.
+Implement a decision replay query/service that can reconstruct:
+- evidence;
+- agent decisions;
+- critique;
+- strategy;
+- stress tests;
+- risk result;
+- execution;
+- outcome.
 
-Do not allow autonomous agents to use Alpaca MCP or Alpaca CLI as an execution path.
+### Phase 12 — Learning
+Implement trade autopsy and memory persistence.
 
-## Featherless Usage
+Learning must not silently modify hard risk rules.
 
-Featherless is the intended first-class inference provider.
+### Phase 13 — War Room
+Build a compelling frontend showing:
+- live committee activity;
+- evidence;
+- disagreement;
+- strategy;
+- stress results;
+- Governor verdict;
+- execution;
+- P&L;
+- audit trail;
+- replay/autopsy.
 
-Implementation should include:
+## Required tests
 
-- Provider interface
-- Featherless adapter
-- Server-side API key configuration
-- Model selection policy
-- Request timeouts
-- Retry policy
-- Structured request and response handling
-- Trace persistence
-- Error classification
-- Secret redaction
-- Fail-closed behavior
+At minimum:
 
-Inference failure must never authorize execution.
+`test_athena.py`
+`test_hades.py`
+`test_hermes.py`
+`test_morpheus.py`
+`test_risk_governor.py`
+`test_state_machine.py`
+`test_execution_guard.py`
+`test_alpaca_adapter.py`
+`test_idempotency.py`
+`test_reconciliation.py`
 
-## Database Expectations
+The following must be demonstrably true:
 
-The database should preserve durable records for:
+1. Excessive risk is rejected.
+2. Low reward/risk is rejected.
+3. Invalid lifecycle transitions are rejected.
+4. Missing approval is rejected.
+5. Live trading mode is rejected in hackathon mode.
+6. Duplicate client order IDs cannot submit twice.
+7. Unknown broker submission is reconciled before retry.
+8. An LLM output cannot bypass the Governor.
+9. MCP execution tools are unavailable to all four agents.
+10. Dependency failure fails closed.
 
-- Opportunities
-- Lifecycle transitions
-- Agent decisions
-- Inference traces
-- MCP calls
-- Quantitative calculations
-- Strategies
-- Trade legs
-- Options contracts
-- Risk evaluations
-- Execution validations
-- Orders
-- Fills
-- Positions
-- Position snapshots
-- Reconciliation events
-- Autopsies
-- Memory records
-- System state
-- Kill switch events
+## Coding rules
 
-Prefer constraints and indexes that enforce correctness rather than relying only on application convention.
+- Prefer typed Python and Pydantic.
+- Keep domain logic independent from vendor SDKs.
+- Wrap Featherless and Alpaca behind adapters.
+- Do not hard-code secrets.
+- Do not put business logic in frontend components.
+- Keep functions small and testable.
+- Use dependency injection where useful.
+- Add correlation IDs to workflows/events.
+- Use migrations, not ad-hoc production schema changes.
+- Preserve audit data.
+- Do not delete safety checks to make a demo work.
 
-## Testing Expectations
+## Git workflow
 
-For any meaningful implementation, add or update relevant tests.
+Make small commits after meaningful milestones.
 
-Required test categories:
+Suggested sequence:
+1. `chore: establish oracle x foundation`
+2. `feat: add domain contracts`
+3. `feat: implement lifecycle state machine`
+4. `feat: add featherless inference adapter`
+5. `feat: implement committee agents`
+6. `feat: add alpaca mcp integration`
+7. `feat: implement deterministic risk governor`
+8. `feat: add execution guard and idempotency`
+9. `feat: add alpaca execution adapter`
+10. `feat: add replay and audit trail`
+11. `feat: build oracle x war room`
 
-- Unit tests
-- State-machine tests
-- Quantitative service tests
-- Options strategy tests
-- Risk Governor tests
-- Execution Guard tests
-- Featherless adapter tests
-- Alpaca adapter tests
-- MCP boundary tests
-- Database migration tests
-- Audit/replay tests
-- Paper-trading smoke tests
+## Final operating rule
 
-Include adversarial tests proving agents cannot bypass deterministic execution controls.
+When there is tension between making the demo flashy and preserving correctness, preserve correctness.
 
-## Secrets And Security
+The goal is not to build a chatbot that can trade.
 
-Never commit secrets.
-
-Keep these server-side:
-
-- Alpaca credentials
-- Featherless credentials
-- Supabase service credentials
-- Broker credentials
-- Market-data credentials
-- MCP credentials
-
-Frontend code must not receive broker secrets or unrestricted service-role credentials.
-
-Paper trading should be the default. Live trading must require explicit configuration and protective controls.
-
-## Build Sequence
-
-Recommended implementation order:
-
-1. Foundation docs and environment contract.
-2. Supabase schema.
-3. State machine.
-4. Deterministic quantitative services.
-5. Featherless adapter.
-6. Agent runtime.
-7. Risk Governor.
-8. Execution Guard.
-9. Alpaca paper-trading adapter.
-10. Reconciliation and monitoring.
-11. War Room frontend.
-12. Audit replay.
-13. Autopsy and memory.
-14. End-to-end and adversarial testing.
-15. Deployment.
-
-## Stop Conditions
-
-Stop and ask before:
-
-- Weakening an agent or execution boundary.
-- Enabling live trading.
-- Adding a direct order path from agent code.
-- Removing audit logging from trading decisions.
-- Storing secrets in files.
-- Replacing deterministic calculations with LLM calculations.
-- Changing the lifecycle without updating the architecture docs.
+The goal is to build a defensible AI trading committee where:
+**models reason, deterministic software governs, Alpaca executes, and every decision can be replayed.**

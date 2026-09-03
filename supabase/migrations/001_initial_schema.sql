@@ -1,630 +1,203 @@
--- ORACLE X initial schema
--- Durable source of truth for opportunities, agents, deterministic controls,
--- broker execution, audit replay, and learning.
+BEGIN;
 
-create extension if not exists pgcrypto;
-create extension if not exists vector;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-create type agent_role as enum (
-  'ATHENA',
-  'HADES',
-  'HERMES',
-  'MORPHEUS',
-  'SYSTEM',
-  'OPERATOR'
+DO $$ BEGIN
+  CREATE TYPE opportunity_state AS ENUM ('DETECTED','INVESTIGATING','THESIS_CREATED','THESIS_CHALLENGED','STRATEGY_SELECTED','STRESS_TESTED','RISK_EVALUATED','APPROVED','EXECUTION_READY','SUBMITTED','FILLED','FAILED','POSITION_OPEN','POSITION_MONITORING','EXIT_SIGNAL','EXIT_EXECUTION','POSITION_CLOSED','AUTOPSY','LEARNED','REJECTED');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE agent_type AS ENUM ('ATHENA','HADES','HERMES','MORPHEUS');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE agent_status AS ENUM ('PENDING','RUNNING','COMPLETED','FAILED','TIMEOUT');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE decision_type AS ENUM ('THESIS','CRITIQUE','STRATEGY','STRESS_TEST','RISK','EXECUTION','EXIT','LEARNING');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE trade_status AS ENUM ('PROPOSED','APPROVED','EXECUTION_READY','SUBMITTED','PENDING','FILLED','CANCELED','REJECTED','OPEN','CLOSING','CLOSED','FAILED');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE strategy_type AS ENUM ('LONG_CALL','LONG_PUT','CASH_SECURED_PUT','COVERED_CALL','CALL_SPREAD','PUT_SPREAD','BULL_CALL_SPREAD','BEAR_PUT_SPREAD','BULL_PUT_SPREAD','BEAR_CALL_SPREAD','STRADDLE','STRANGLE','IRON_CONDOR','IRON_BUTTERFLY','CUSTOM_MLEG');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), external_user_id text UNIQUE, email text UNIQUE, display_name text,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-create type opportunity_state as enum (
-  'DETECTED',
-  'INVESTIGATING',
-  'THESIS_CREATED',
-  'THESIS_CHALLENGED',
-  'STRATEGY_SELECTED',
-  'STRESS_TESTED',
-  'RISK_EVALUATED',
-  'APPROVED',
-  'EXECUTION_READY',
-  'SUBMITTED',
-  'FILLED',
-  'POSITION_OPEN',
-  'POSITION_MONITORING',
-  'EXIT_SIGNAL',
-  'EXIT_EXECUTION',
-  'POSITION_CLOSED',
-  'AUTOPSY',
-  'LEARNED',
-  'REJECTED_BY_HADES',
-  'REJECTED_BY_RISK',
-  'REJECTED_BY_EXECUTION_GUARD',
-  'DATA_STALE',
-  'BROKER_UNAVAILABLE',
-  'KILL_SWITCH_ACTIVE',
-  'EXECUTION_FAILED',
-  'CANCELLED',
-  'EXPIRED'
+CREATE TABLE IF NOT EXISTS portfolios (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name text NOT NULL DEFAULT 'ORACLE X Paper Portfolio', alpaca_account_id text, base_currency text NOT NULL DEFAULT 'USD',
+  equity numeric(20,8), buying_power numeric(20,8), is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-create type trade_asset_class as enum (
-  'EQUITY',
-  'OPTION',
-  'CRYPTO',
-  'CASH'
+CREATE TABLE IF NOT EXISTS risk_policies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), portfolio_id uuid NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
+  version text NOT NULL, max_position_notional numeric(20,8), max_portfolio_risk_pct numeric(12,8), max_loss_per_trade numeric(20,8),
+  max_open_trades integer, min_reward_risk numeric(12,8), max_bid_ask_spread_pct numeric(12,8), max_contract_quantity integer,
+  min_days_to_expiration integer, max_days_to_expiration integer, max_concentration_pct numeric(12,8),
+  max_stale_market_data_seconds integer NOT NULL DEFAULT 60, paper_only boolean NOT NULL DEFAULT true, is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(portfolio_id, version)
 );
 
-create type option_type as enum (
-  'CALL',
-  'PUT'
+CREATE TABLE IF NOT EXISTS market_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), symbol text NOT NULL, captured_at timestamptz NOT NULL DEFAULT now(),
+  price numeric(20,8), bid numeric(20,8), ask numeric(20,8), volume numeric(30,8), volatility numeric(20,10), iv numeric(20,10), rsi numeric(20,10),
+  greeks jsonb NOT NULL DEFAULT '{}'::jsonb, indicators jsonb NOT NULL DEFAULT '{}'::jsonb, source text, raw_payload jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 
-create type leg_side as enum (
-  'BUY',
-  'SELL'
+CREATE TABLE IF NOT EXISTS opportunities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), portfolio_id uuid REFERENCES portfolios(id) ON DELETE SET NULL, symbol text NOT NULL,
+  state opportunity_state NOT NULL DEFAULT 'DETECTED', detected_at timestamptz NOT NULL DEFAULT now(),
+  current_thesis jsonb NOT NULL DEFAULT '{}'::jsonb, evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+  invalidation_conditions jsonb NOT NULL DEFAULT '[]'::jsonb, confidence numeric(8,6),
+  source_snapshot_id uuid REFERENCES market_snapshots(id) ON DELETE SET NULL, correlation_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-create type strategy_kind as enum (
-  'LONG_EQUITY',
-  'SHORT_EQUITY',
-  'LONG_CALL',
-  'LONG_PUT',
-  'VERTICAL_SPREAD',
-  'STRADDLE',
-  'STRANGLE',
-  'IRON_CONDOR',
-  'DEFINED_RISK_COMBINATION',
-  'CUSTOM'
+CREATE TABLE IF NOT EXISTS trades (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), opportunity_id uuid REFERENCES opportunities(id) ON DELETE SET NULL,
+  portfolio_id uuid REFERENCES portfolios(id) ON DELETE SET NULL, strategy_type strategy_type, status trade_status NOT NULL DEFAULT 'PROPOSED',
+  thesis jsonb NOT NULL DEFAULT '{}'::jsonb, rationale jsonb NOT NULL DEFAULT '{}'::jsonb,
+  max_loss numeric(20,8), max_profit numeric(20,8), expected_reward numeric(20,8), reward_risk numeric(20,8),
+  entry_price numeric(20,8), exit_price numeric(20,8), quantity integer, approved_at timestamptz, submitted_at timestamptz,
+  filled_at timestamptz, closed_at timestamptz, correlation_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-create type risk_decision as enum (
-  'APPROVED',
-  'REJECTED',
-  'NEEDS_MORE_DATA',
-  'SYSTEM_BLOCKED'
+CREATE TABLE IF NOT EXISTS agent_decisions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), opportunity_id uuid REFERENCES opportunities(id) ON DELETE CASCADE,
+  trade_id uuid REFERENCES trades(id) ON DELETE SET NULL, agent agent_type NOT NULL, status agent_status NOT NULL DEFAULT 'PENDING',
+  decision_type decision_type NOT NULL, provider text NOT NULL DEFAULT 'featherless', model text, agent_version text NOT NULL,
+  prompt_version text NOT NULL, reasoning_summary text, evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+  risks jsonb NOT NULL DEFAULT '[]'::jsonb, assumptions jsonb NOT NULL DEFAULT '[]'::jsonb,
+  invalidation_conditions jsonb NOT NULL DEFAULT '[]'::jsonb, input_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  output_payload jsonb NOT NULL DEFAULT '{}'::jsonb, input_hash text, output_hash text, confidence numeric(8,6), latency_ms integer,
+  input_tokens integer, output_tokens integer, created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create type execution_guard_decision as enum (
-  'PASSED',
-  'FAILED',
-  'BLOCKED'
+CREATE TABLE IF NOT EXISTS inference_traces (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), agent_decision_id uuid REFERENCES agent_decisions(id) ON DELETE SET NULL,
+  provider text NOT NULL DEFAULT 'featherless', model text, endpoint text, request_id text, prompt_version text,
+  temperature numeric(8,5), request_payload jsonb NOT NULL DEFAULT '{}'::jsonb, response_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  input_hash text, output_hash text, input_tokens integer, output_tokens integer, latency_ms integer, created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create type broker_order_status as enum (
-  'CREATED',
-  'SUBMITTED',
-  'ACCEPTED',
-  'PARTIALLY_FILLED',
-  'FILLED',
-  'CANCELLED',
-  'REJECTED',
-  'EXPIRED',
-  'FAILED'
+CREATE TABLE IF NOT EXISTS risk_evaluations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), trade_id uuid NOT NULL REFERENCES trades(id) ON DELETE CASCADE,
+  policy_id uuid REFERENCES risk_policies(id) ON DELETE SET NULL, policy_version text,
+  decision text NOT NULL CHECK (decision IN ('APPROVE','REJECT')), reason_codes jsonb NOT NULL DEFAULT '[]'::jsonb,
+  measured_values jsonb NOT NULL DEFAULT '{}'::jsonb, evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
+  evaluated_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create type trading_mode as enum (
-  'PAPER',
-  'LIVE'
+CREATE TABLE IF NOT EXISTS trade_legs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), trade_id uuid NOT NULL REFERENCES trades(id) ON DELETE CASCADE, leg_index integer NOT NULL,
+  symbol text NOT NULL, underlying_symbol text NOT NULL, option_type text CHECK (option_type IN ('CALL','PUT') OR option_type IS NULL),
+  strike numeric(20,8), expiration date, side text NOT NULL, position_intent text, ratio integer NOT NULL DEFAULT 1, quantity integer NOT NULL DEFAULT 1,
+  bid numeric(20,8), ask numeric(20,8), mid numeric(20,8), implied_volatility numeric(20,10), delta numeric(20,10), gamma numeric(20,10),
+  theta numeric(20,10), vega numeric(20,10), rho numeric(20,10), created_at timestamptz NOT NULL DEFAULT now(), UNIQUE(trade_id, leg_index)
 );
 
-create type audit_event_kind as enum (
-  'STATE_TRANSITION',
-  'STATE_TRANSITION_REJECTED',
-  'AGENT_DECISION',
-  'INFERENCE_TRACE',
-  'MCP_CALL',
-  'QUANT_CALCULATION',
-  'RISK_EVALUATION',
-  'EXECUTION_VALIDATION',
-  'BROKER_ORDER',
-  'BROKER_FILL',
-  'POSITION_EVENT',
-  'AUTOPSY',
-  'MEMORY',
-  'SYSTEM_STATE',
-  'KILL_SWITCH',
-  'SECURITY'
+CREATE TABLE IF NOT EXISTS alpaca_orders (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), trade_id uuid REFERENCES trades(id) ON DELETE SET NULL,
+  alpaca_order_id text UNIQUE, client_order_id text NOT NULL UNIQUE, order_class text, order_type text, side text, time_in_force text,
+  quantity numeric(20,8), limit_price numeric(20,8), stop_price numeric(20,8), status text,
+  raw_response jsonb NOT NULL DEFAULT '{}'::jsonb, submitted_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table agents (
-  id uuid primary key default gen_random_uuid(),
-  role agent_role not null,
-  name text not null,
-  description text,
-  is_active boolean not null default true,
-  created_at timestamptz not null default now(),
-  unique (role, name)
+CREATE TABLE IF NOT EXISTS execution_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), trade_id uuid REFERENCES trades(id) ON DELETE SET NULL,
+  alpaca_order_id uuid REFERENCES alpaca_orders(id) ON DELETE SET NULL, event_type text NOT NULL, broker_status text,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb, occurred_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table opportunities (
-  id uuid primary key default gen_random_uuid(),
-  symbol text not null,
-  title text not null,
-  description text,
-  state opportunity_state not null default 'DETECTED',
-  detected_by agent_role not null default 'SYSTEM',
-  detection_source text,
-  confidence numeric(6, 5),
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  closed_at timestamptz,
-  constraint opportunities_confidence_range check (
-    confidence is null or (confidence >= 0 and confidence <= 1)
-  )
+CREATE TABLE IF NOT EXISTS positions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), portfolio_id uuid NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
+  trade_id uuid REFERENCES trades(id) ON DELETE SET NULL, symbol text NOT NULL, quantity numeric(20,8) NOT NULL,
+  avg_entry_price numeric(20,8), market_price numeric(20,8), market_value numeric(20,8), unrealized_pnl numeric(20,8), realized_pnl numeric(20,8),
+  broker_position_id text, reconciled_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table lifecycle_transitions (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid not null references opportunities(id) on delete cascade,
-  previous_state opportunity_state,
-  new_state opportunity_state not null,
-  actor_role agent_role not null,
-  actor_name text,
-  reason text not null,
-  validation_result jsonb not null default '{}'::jsonb,
-  evidence_refs jsonb not null default '[]'::jsonb,
-  idempotency_key text,
-  rejected boolean not null default false,
-  created_at timestamptz not null default now(),
-  unique (opportunity_id, idempotency_key)
+CREATE TABLE IF NOT EXISTS oracle_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), correlation_id uuid NOT NULL, event_type text NOT NULL, entity_type text, entity_id uuid,
+  from_state text, to_state text, actor text, payload jsonb NOT NULL DEFAULT '{}'::jsonb, evidence_refs jsonb NOT NULL DEFAULT '[]'::jsonb,
+  occurred_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table audit_events (
-  id uuid primary key default gen_random_uuid(),
-  event_kind audit_event_kind not null,
-  opportunity_id uuid references opportunities(id) on delete set null,
-  actor_role agent_role not null default 'SYSTEM',
-  actor_name text,
-  subject_table text,
-  subject_id uuid,
-  idempotency_key text,
-  payload jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  unique (event_kind, idempotency_key)
+CREATE TABLE IF NOT EXISTS risk_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), trade_id uuid REFERENCES trades(id) ON DELETE SET NULL, event_type text NOT NULL,
+  severity text NOT NULL, reason_code text, payload jsonb NOT NULL DEFAULT '{}'::jsonb, occurred_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table market_evidence (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid not null references opportunities(id) on delete cascade,
-  source text not null,
-  symbol text not null,
-  observed_at timestamptz not null,
-  freshness_seconds integer,
-  summary text,
-  evidence jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  constraint market_evidence_freshness_nonnegative check (
-    freshness_seconds is null or freshness_seconds >= 0
-  )
+CREATE TABLE IF NOT EXISTS mcp_tool_calls (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), correlation_id uuid, opportunity_id uuid REFERENCES opportunities(id) ON DELETE SET NULL,
+  trade_id uuid REFERENCES trades(id) ON DELETE SET NULL, agent agent_type, tool_name text NOT NULL, status text NOT NULL,
+  arguments jsonb NOT NULL DEFAULT '{}'::jsonb, result jsonb NOT NULL DEFAULT '{}'::jsonb, error_message text, latency_ms integer,
+  called_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table agent_decisions (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid references opportunities(id) on delete cascade,
-  agent_id uuid references agents(id) on delete set null,
-  role agent_role not null,
-  decision_type text not null,
-  decision text not null,
-  rationale text,
-  confidence numeric(6, 5),
-  evidence_refs jsonb not null default '[]'::jsonb,
-  created_at timestamptz not null default now(),
-  constraint agent_decisions_confidence_range check (
-    confidence is null or (confidence >= 0 and confidence <= 1)
-  )
+CREATE TABLE IF NOT EXISTS trade_autopsies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), trade_id uuid NOT NULL UNIQUE REFERENCES trades(id) ON DELETE CASCADE,
+  outcome text, pnl numeric(20,8), thesis_quality text, strategy_quality text, risk_quality text, execution_quality text,
+  what_worked jsonb NOT NULL DEFAULT '[]'::jsonb, what_failed jsonb NOT NULL DEFAULT '[]'::jsonb, lessons jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table inference_traces (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid references opportunities(id) on delete set null,
-  agent_decision_id uuid references agent_decisions(id) on delete set null,
-  provider text not null default 'featherless',
-  model text not null,
-  request_hash text not null,
-  request_payload jsonb not null default '{}'::jsonb,
-  response_payload jsonb,
-  finish_reason text,
-  prompt_tokens integer,
-  completion_tokens integer,
-  total_tokens integer,
-  latency_ms integer,
-  error_code text,
-  error_message text,
-  created_at timestamptz not null default now(),
-  constraint inference_trace_token_counts_nonnegative check (
-    (prompt_tokens is null or prompt_tokens >= 0)
-    and (completion_tokens is null or completion_tokens >= 0)
-    and (total_tokens is null or total_tokens >= 0)
-  ),
-  constraint inference_trace_latency_nonnegative check (
-    latency_ms is null or latency_ms >= 0
-  )
+CREATE TABLE IF NOT EXISTS oracle_memory (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), memory_type text NOT NULL, symbol text,
+  source_trade_id uuid REFERENCES trades(id) ON DELETE SET NULL, content jsonb NOT NULL DEFAULT '{}'::jsonb,
+  confidence numeric(8,6), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table mcp_calls (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid references opportunities(id) on delete set null,
-  actor_role agent_role not null,
-  server_name text not null,
-  tool_name text not null,
-  purpose text not null,
-  request_metadata jsonb not null default '{}'::jsonb,
-  response_metadata jsonb,
-  success boolean not null,
-  latency_ms integer,
-  error_code text,
-  error_message text,
-  created_at timestamptz not null default now(),
-  constraint mcp_calls_latency_nonnegative check (
-    latency_ms is null or latency_ms >= 0
-  )
+CREATE TABLE IF NOT EXISTS system_state (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), state text NOT NULL CHECK (state IN ('ACTIVE','PAUSED','HALTED')),
+  reason text, kill_switch boolean NOT NULL DEFAULT false, changed_by text, changed_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now()
 );
 
-create table quantitative_calculations (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid references opportunities(id) on delete cascade,
-  calculation_type text not null,
-  service_name text not null,
-  service_version text,
-  inputs jsonb not null default '{}'::jsonb,
-  outputs jsonb not null default '{}'::jsonb,
-  data_as_of timestamptz,
-  created_at timestamptz not null default now()
-);
+CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol_time ON market_snapshots(symbol, captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_opportunities_state ON opportunities(state);
+CREATE INDEX IF NOT EXISTS idx_opportunities_symbol ON opportunities(symbol);
+CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
+CREATE INDEX IF NOT EXISTS idx_trades_portfolio ON trades(portfolio_id);
+CREATE INDEX IF NOT EXISTS idx_agent_decisions_opportunity ON agent_decisions(opportunity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_inference_traces_decision ON inference_traces(agent_decision_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_risk_evaluations_trade ON risk_evaluations(trade_id, evaluated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alpaca_orders_client ON alpaca_orders(client_order_id);
+CREATE INDEX IF NOT EXISTS idx_execution_events_trade ON execution_events(trade_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_positions_portfolio_symbol ON positions(portfolio_id, symbol);
+CREATE INDEX IF NOT EXISTS idx_oracle_events_correlation ON oracle_events(correlation_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_oracle_events_entity ON oracle_events(entity_type, entity_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_tool_calls_correlation ON mcp_tool_calls(correlation_id, called_at);
+CREATE INDEX IF NOT EXISTS idx_memory_symbol ON oracle_memory(symbol, created_at DESC);
 
-create table options_contracts (
-  id uuid primary key default gen_random_uuid(),
-  underlying_symbol text not null,
-  contract_symbol text not null unique,
-  option_type option_type not null,
-  expiration_date date not null,
-  strike numeric(18, 6) not null,
-  multiplier integer not null default 100,
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  constraint options_contracts_strike_positive check (strike > 0),
-  constraint options_contracts_multiplier_positive check (multiplier > 0)
-);
+CREATE OR REPLACE FUNCTION update_updated_at_column() RETURNS TRIGGER AS $$
+BEGIN NEW.updated_at = now(); RETURN NEW; END; $$ LANGUAGE plpgsql;
 
-create table strategies (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid not null references opportunities(id) on delete cascade,
-  strategy_kind strategy_kind not null,
-  name text not null,
-  thesis text,
-  position_intent text not null,
-  net_debit_credit numeric(18, 6),
-  max_profit numeric(18, 6),
-  max_loss numeric(18, 6),
-  reward_risk numeric(18, 6),
-  break_even jsonb not null default '[]'::jsonb,
-  status text not null default 'PROPOSED',
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint strategies_max_loss_nonnegative check (
-    max_loss is null or max_loss >= 0
-  )
-);
+DROP TRIGGER IF EXISTS trg_users_updated_at ON users;
+CREATE TRIGGER trg_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS trg_portfolios_updated_at ON portfolios;
+CREATE TRIGGER trg_portfolios_updated_at BEFORE UPDATE ON portfolios FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS trg_risk_policies_updated_at ON risk_policies;
+CREATE TRIGGER trg_risk_policies_updated_at BEFORE UPDATE ON risk_policies FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS trg_opportunities_updated_at ON opportunities;
+CREATE TRIGGER trg_opportunities_updated_at BEFORE UPDATE ON opportunities FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS trg_trades_updated_at ON trades;
+CREATE TRIGGER trg_trades_updated_at BEFORE UPDATE ON trades FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS trg_positions_updated_at ON positions;
+CREATE TRIGGER trg_positions_updated_at BEFORE UPDATE ON positions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS trg_oracle_memory_updated_at ON oracle_memory;
+CREATE TRIGGER trg_oracle_memory_updated_at BEFORE UPDATE ON oracle_memory FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-create table trade_legs (
-  id uuid primary key default gen_random_uuid(),
-  strategy_id uuid not null references strategies(id) on delete cascade,
-  asset_class trade_asset_class not null,
-  symbol text not null,
-  option_contract_id uuid references options_contracts(id) on delete restrict,
-  side leg_side not null,
-  quantity numeric(18, 6) not null,
-  ratio numeric(18, 6) not null default 1,
-  limit_price numeric(18, 6),
-  greeks jsonb not null default '{}'::jsonb,
-  implied_volatility numeric(18, 8),
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  constraint trade_legs_quantity_positive check (quantity > 0),
-  constraint trade_legs_ratio_positive check (ratio > 0),
-  constraint trade_legs_limit_price_nonnegative check (
-    limit_price is null or limit_price >= 0
-  ),
-  constraint trade_legs_iv_nonnegative check (
-    implied_volatility is null or implied_volatility >= 0
-  ),
-  constraint trade_legs_option_contract_required check (
-    (asset_class = 'OPTION' and option_contract_id is not null)
-    or (asset_class <> 'OPTION' and option_contract_id is null)
-  )
-);
+INSERT INTO system_state (state, reason, kill_switch, changed_by)
+SELECT 'ACTIVE', 'Initial ORACLE X system state', false, 'migration'
+WHERE NOT EXISTS (SELECT 1 FROM system_state);
 
-create table risk_evaluations (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid not null references opportunities(id) on delete cascade,
-  strategy_id uuid references strategies(id) on delete set null,
-  decision risk_decision not null,
-  risk_governor_version text not null,
-  evaluated_inputs jsonb not null default '{}'::jsonb,
-  checks jsonb not null default '[]'::jsonb,
-  hard_limits jsonb not null default '{}'::jsonb,
-  portfolio_exposure jsonb not null default '{}'::jsonb,
-  max_loss numeric(18, 6),
-  position_size numeric(18, 6),
-  rejection_reasons jsonb not null default '[]'::jsonb,
-  expires_at timestamptz,
-  created_at timestamptz not null default now(),
-  constraint risk_evaluations_max_loss_nonnegative check (
-    max_loss is null or max_loss >= 0
-  )
-);
-
-create table execution_validations (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid not null references opportunities(id) on delete cascade,
-  strategy_id uuid references strategies(id) on delete set null,
-  risk_evaluation_id uuid references risk_evaluations(id) on delete restrict,
-  decision execution_guard_decision not null,
-  execution_guard_version text not null,
-  checks jsonb not null default '[]'::jsonb,
-  final_order_payload jsonb not null default '{}'::jsonb,
-  idempotency_key text not null unique,
-  rejection_reasons jsonb not null default '[]'::jsonb,
-  created_at timestamptz not null default now()
-);
-
-create table broker_orders (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid not null references opportunities(id) on delete restrict,
-  strategy_id uuid references strategies(id) on delete restrict,
-  execution_validation_id uuid not null references execution_validations(id) on delete restrict,
-  trading_mode trading_mode not null default 'PAPER',
-  broker text not null default 'alpaca',
-  broker_order_id text,
-  client_order_id text not null unique,
-  status broker_order_status not null default 'CREATED',
-  order_payload jsonb not null default '{}'::jsonb,
-  response_payload jsonb,
-  submitted_at timestamptz,
-  updated_at timestamptz not null default now(),
-  created_at timestamptz not null default now()
-);
-
-create table broker_order_legs (
-  id uuid primary key default gen_random_uuid(),
-  broker_order_id uuid not null references broker_orders(id) on delete cascade,
-  trade_leg_id uuid references trade_legs(id) on delete restrict,
-  broker_leg_id text,
-  symbol text not null,
-  side leg_side not null,
-  quantity numeric(18, 6) not null,
-  filled_quantity numeric(18, 6) not null default 0,
-  average_fill_price numeric(18, 6),
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  constraint broker_order_legs_quantity_positive check (quantity > 0),
-  constraint broker_order_legs_filled_quantity_nonnegative check (filled_quantity >= 0),
-  constraint broker_order_legs_avg_price_nonnegative check (
-    average_fill_price is null or average_fill_price >= 0
-  )
-);
-
-create table fills (
-  id uuid primary key default gen_random_uuid(),
-  broker_order_id uuid not null references broker_orders(id) on delete cascade,
-  broker_order_leg_id uuid references broker_order_legs(id) on delete set null,
-  broker_fill_id text,
-  symbol text not null,
-  side leg_side not null,
-  quantity numeric(18, 6) not null,
-  price numeric(18, 6) not null,
-  filled_at timestamptz not null,
-  raw_payload jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  constraint fills_quantity_positive check (quantity > 0),
-  constraint fills_price_nonnegative check (price >= 0),
-  unique (broker_order_id, broker_fill_id)
-);
-
-create table positions (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid references opportunities(id) on delete set null,
-  strategy_id uuid references strategies(id) on delete set null,
-  broker text not null default 'alpaca',
-  trading_mode trading_mode not null default 'PAPER',
-  symbol text not null,
-  asset_class trade_asset_class not null,
-  quantity numeric(18, 6) not null,
-  average_entry_price numeric(18, 6),
-  opened_at timestamptz not null default now(),
-  closed_at timestamptz,
-  realized_pnl numeric(18, 6),
-  unrealized_pnl numeric(18, 6),
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create table position_snapshots (
-  id uuid primary key default gen_random_uuid(),
-  position_id uuid not null references positions(id) on delete cascade,
-  quantity numeric(18, 6) not null,
-  market_value numeric(18, 6),
-  unrealized_pnl numeric(18, 6),
-  greeks jsonb not null default '{}'::jsonb,
-  broker_payload jsonb not null default '{}'::jsonb,
-  captured_at timestamptz not null default now()
-);
-
-create table broker_reconciliation_events (
-  id uuid primary key default gen_random_uuid(),
-  broker text not null default 'alpaca',
-  trading_mode trading_mode not null default 'PAPER',
-  status text not null,
-  positions_checked integer not null default 0,
-  orders_checked integer not null default 0,
-  discrepancies jsonb not null default '[]'::jsonb,
-  created_at timestamptz not null default now(),
-  constraint broker_recon_counts_nonnegative check (
-    positions_checked >= 0 and orders_checked >= 0
-  )
-);
-
-create table system_state (
-  key text primary key,
-  value jsonb not null default '{}'::jsonb,
-  updated_by agent_role not null default 'SYSTEM',
-  updated_at timestamptz not null default now()
-);
-
-create table kill_switch_events (
-  id uuid primary key default gen_random_uuid(),
-  active boolean not null,
-  reason text not null,
-  actor_role agent_role not null,
-  actor_name text,
-  created_at timestamptz not null default now()
-);
-
-create table broker_health_events (
-  id uuid primary key default gen_random_uuid(),
-  broker text not null default 'alpaca',
-  trading_mode trading_mode not null default 'PAPER',
-  healthy boolean not null,
-  latency_ms integer,
-  details jsonb not null default '{}'::jsonb,
-  checked_at timestamptz not null default now(),
-  constraint broker_health_latency_nonnegative check (
-    latency_ms is null or latency_ms >= 0
-  )
-);
-
-create table data_health_events (
-  id uuid primary key default gen_random_uuid(),
-  provider text not null,
-  healthy boolean not null,
-  max_age_seconds integer,
-  details jsonb not null default '{}'::jsonb,
-  checked_at timestamptz not null default now(),
-  constraint data_health_age_nonnegative check (
-    max_age_seconds is null or max_age_seconds >= 0
-  )
-);
-
-create table autopsies (
-  id uuid primary key default gen_random_uuid(),
-  opportunity_id uuid not null references opportunities(id) on delete cascade,
-  position_id uuid references positions(id) on delete set null,
-  author_role agent_role not null default 'MORPHEUS',
-  outcome_summary text not null,
-  thesis_review text,
-  risk_review text,
-  execution_review text,
-  lessons jsonb not null default '[]'::jsonb,
-  metrics jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
-);
-
-create table memory_records (
-  id uuid primary key default gen_random_uuid(),
-  source_autopsy_id uuid references autopsies(id) on delete set null,
-  opportunity_id uuid references opportunities(id) on delete set null,
-  memory_type text not null,
-  content text not null,
-  embedding vector,
-  tags jsonb not null default '[]'::jsonb,
-  confidence numeric(6, 5),
-  created_at timestamptz not null default now(),
-  constraint memory_records_confidence_range check (
-    confidence is null or (confidence >= 0 and confidence <= 1)
-  )
-);
-
-create index idx_opportunities_state on opportunities(state);
-create index idx_opportunities_symbol on opportunities(symbol);
-create index idx_lifecycle_transitions_opportunity_created on lifecycle_transitions(opportunity_id, created_at);
-create index idx_audit_events_opportunity_created on audit_events(opportunity_id, created_at);
-create index idx_audit_events_kind_created on audit_events(event_kind, created_at);
-create index idx_market_evidence_opportunity on market_evidence(opportunity_id);
-create index idx_agent_decisions_opportunity on agent_decisions(opportunity_id);
-create index idx_inference_traces_opportunity on inference_traces(opportunity_id);
-create index idx_mcp_calls_opportunity on mcp_calls(opportunity_id);
-create index idx_quant_calculations_opportunity_type on quantitative_calculations(opportunity_id, calculation_type);
-create index idx_options_contracts_underlying_expiration on options_contracts(underlying_symbol, expiration_date);
-create index idx_strategies_opportunity on strategies(opportunity_id);
-create index idx_trade_legs_strategy on trade_legs(strategy_id);
-create index idx_risk_evaluations_opportunity_created on risk_evaluations(opportunity_id, created_at);
-create index idx_execution_validations_opportunity_created on execution_validations(opportunity_id, created_at);
-create index idx_broker_orders_opportunity on broker_orders(opportunity_id);
-create index idx_broker_orders_status on broker_orders(status);
-create index idx_broker_orders_broker_order_id on broker_orders(broker_order_id);
-create index idx_fills_order on fills(broker_order_id);
-create index idx_positions_symbol on positions(symbol);
-create index idx_positions_opportunity on positions(opportunity_id);
-create index idx_position_snapshots_position_captured on position_snapshots(position_id, captured_at);
-create index idx_autopsies_opportunity on autopsies(opportunity_id);
-create index idx_memory_records_opportunity on memory_records(opportunity_id);
-
-create or replace function set_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
-
-create trigger set_opportunities_updated_at
-before update on opportunities
-for each row execute function set_updated_at();
-
-create trigger set_strategies_updated_at
-before update on strategies
-for each row execute function set_updated_at();
-
-create trigger set_broker_orders_updated_at
-before update on broker_orders
-for each row execute function set_updated_at();
-
-create trigger set_positions_updated_at
-before update on positions
-for each row execute function set_updated_at();
-
-create or replace function prevent_audit_event_update()
-returns trigger
-language plpgsql
-as $$
-begin
-  raise exception 'audit_events are append-only';
-end;
-$$;
-
-create trigger audit_events_append_only_update
-before update on audit_events
-for each row execute function prevent_audit_event_update();
-
-create trigger audit_events_append_only_delete
-before delete on audit_events
-for each row execute function prevent_audit_event_update();
-
-alter table agents enable row level security;
-alter table opportunities enable row level security;
-alter table lifecycle_transitions enable row level security;
-alter table audit_events enable row level security;
-alter table market_evidence enable row level security;
-alter table agent_decisions enable row level security;
-alter table inference_traces enable row level security;
-alter table mcp_calls enable row level security;
-alter table quantitative_calculations enable row level security;
-alter table options_contracts enable row level security;
-alter table strategies enable row level security;
-alter table trade_legs enable row level security;
-alter table risk_evaluations enable row level security;
-alter table execution_validations enable row level security;
-alter table broker_orders enable row level security;
-alter table broker_order_legs enable row level security;
-alter table fills enable row level security;
-alter table positions enable row level security;
-alter table position_snapshots enable row level security;
-alter table broker_reconciliation_events enable row level security;
-alter table system_state enable row level security;
-alter table kill_switch_events enable row level security;
-alter table broker_health_events enable row level security;
-alter table data_health_events enable row level security;
-alter table autopsies enable row level security;
-alter table memory_records enable row level security;
+COMMIT;

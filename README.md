@@ -1,201 +1,96 @@
 # ORACLE X
 
-ORACLE X is a trading intelligence and execution-control system designed around one non-negotiable rule:
+### The AI Investment Committee That Doesn't Trade on Blind Faith
 
-AI agents may reason, investigate, challenge, summarize, and learn, but they must never directly place, modify, or cancel broker orders.
+ORACLE X is an autonomous, multi-agent AI trading intelligence system built for the **Alpaca AI Trading Agents Hackathon**.
 
-All execution authority belongs to deterministic application services guarded by a Risk Governor, an Execution Guard, durable audit records, and explicit broker boundaries.
+Instead of trusting a single AI model to make a trading decision, ORACLE X creates an investment committee where specialized agents reason about an opportunity, challenge assumptions, construct a defined-risk options strategy, and stress-test the proposal.
 
-## Current Status
+A deterministic **Risk Governor** then decides whether the proposed trade is actually allowed to reach the market.
 
-This repository is in foundation setup.
+> **AI builds the case. Deterministic software governs it. Alpaca executes it. Every decision can be replayed.**
 
-Implemented repository files:
+## The Committee
 
-- `AGENTS.md` - agent governance, safety boundaries, lifecycle, and implementation contract
-- `README.md` - project overview and intended build direction
+| Agent | Role | Core question |
+|---|---|---|
+| **ATHENA** | Opportunity Intelligence | Is there an interesting opportunity? |
+| **HADES** | Adversarial Critic | Assume Athena is wrong. Why? |
+| **HERMES** | Options Strategist | What is the best defined-risk expression? |
+| **MORPHEUS** | Stress Tester | Under what scenarios does the trade break? |
 
-Not implemented yet:
-
-- Backend application
-- Frontend War Room
-- Supabase schema
-- Agent runtime
-- Featherless inference adapter
-- Alpaca integrations
-- Deterministic quantitative services
-- Risk Governor
-- Execution Guard
-- Audit/replay system
-- Learning/memory system
-- Tests
-- Deployment configuration
-
-## Architecture Summary
-
-ORACLE X is intended to combine AI-assisted trading research with deterministic controls.
-
-The system should include:
-
-- Agent-assisted opportunity discovery and critique
-- Deterministic quantitative services
-- Deterministic risk evaluation
-- Deterministic execution validation
-- Alpaca paper/live trading integration
-- PostgreSQL/Supabase as durable state
-- A War Room frontend for visibility and operator control
-- Full audit and replay of every trade lifecycle
-- Post-trade autopsy and learning memory
-
-## Agent Model
-
-ORACLE X uses named agents with limited authority:
-
-- **Athena** discovers opportunities, synthesizes evidence, and drafts theses.
-- **Hades** challenges theses, identifies risks, and records dissent.
-- **Hermes** coordinates tool calls, messages, and traceable interactions.
-- **Morpheus** performs autopsies, replay analysis, and memory extraction.
-
-Agents are advisory. They do not own execution authority.
-
-See `AGENTS.md` for the full governance contract.
-
-## Deterministic Control Plane
-
-The following must be implemented as deterministic application services:
-
-- Indicators
-- Returns
-- Volatility
-- Implied volatility
-- Greeks
-- Spreads
-- Reward/risk
-- Exposure
-- P&L
-- Position sizing
-- Stress calculations
-- Risk approval
-- Execution validation
-- Broker order submission
-- Position reconciliation
-
-LLMs may explain these results, but they must not be the source of truth.
-
-## Opportunity Lifecycle
-
-The intended opportunity lifecycle is:
+## Safety Architecture
 
 ```text
-DETECTED
--> INVESTIGATING
--> THESIS_CREATED
--> THESIS_CHALLENGED
--> STRATEGY_SELECTED
--> STRESS_TESTED
--> RISK_EVALUATED
--> APPROVED
--> EXECUTION_READY
--> SUBMITTED
--> FILLED
--> POSITION_OPEN
--> POSITION_MONITORING
--> EXIT_SIGNAL
--> EXIT_EXECUTION
--> POSITION_CLOSED
--> AUTOPSY
--> LEARNED
+Market Evidence
+      ↓
+ATHENA → HADES → HERMES → MORPHEUS
+      ↓
+Structured Contracts
+      ↓
+Deterministic Risk Governor
+      ↓
+Execution Guard
+      ↓
+Alpaca Execution Adapter
+      ↓
+Alpaca
 ```
 
-State transitions must be enforced by application code and written to durable audit storage.
+**No LLM may directly place, modify or cancel an order.**
 
-## Alpaca Integration Boundaries
+The hackathon implementation uses **paper trading only**.
 
-ORACLE X separates Alpaca responsibilities into three categories:
+## Technology
 
-- **Alpaca MCP**: controlled, auditable broker-related tool interactions.
-- **Alpaca Trading API**: deterministic runtime order submission path.
-- **Alpaca CLI**: development, diagnostics, and manual operations only.
+- **Featherless** — AI inference
+- **Alpaca MCP** — agent-facing market/research tools
+- **Alpaca Trading API** — controlled execution
+- **Alpaca CLI** — diagnostics, automation and reconciliation
+- **Python / FastAPI / Pydantic** — backend and typed contracts
+- **PostgreSQL / Supabase** — system of record
+- **Web frontend** — ORACLE X War Room
 
-No AI agent may use any Alpaca path to directly place, modify, or cancel orders.
+## Decision Replay
 
-## Featherless Inference
+Every major decision is recorded:
 
-Featherless is intended to be the first-class inference provider for agent reasoning.
+```text
+Opportunity
+  ↓
+Evidence
+  ↓
+ATHENA Thesis
+  ↓
+HADES Critique
+  ↓
+HERMES Strategy
+  ↓
+MORPHEUS Stress Test
+  ↓
+Risk Evaluation
+  ↓
+Execution
+  ↓
+Outcome
+  ↓
+Trade Autopsy
+  ↓
+Learning
+```
 
-The future implementation should include:
+The system is designed to answer **why a trade was made, why it was rejected, and what was learned afterward**.
 
-- A provider adapter interface
-- A Featherless adapter
-- Server-side API key handling
-- Model selection per task or agent
-- Request and response tracing
-- Timeout and retry behavior
-- Failure handling that fails closed
-- Redaction of secrets and sensitive data
+## Repository
 
-Inference output must remain advisory and auditable.
+See `AGENTS.md` for the non-negotiable engineering contract and `CODEX-INSTRUCTIONS.md` for the implementation handoff. The canonical database migration is under `supabase/migrations/001_initial_schema.sql`.
 
-## Database Direction
+## Current status
 
-PostgreSQL/Supabase is expected to be the durable source of truth.
+Architecture and repository handoff are established. Implementation proceeds in staged milestones, beginning with the foundation and Featherless AI Engine.
 
-The schema should support:
+## Core philosophy
 
-- Opportunities
-- Lifecycle transitions
-- Agent decisions
-- Inference traces
-- MCP calls
-- Quantitative calculations
-- Strategies
-- Trade legs
-- Options contracts
-- Risk evaluations
-- Execution validations
-- Orders
-- Fills
-- Positions
-- Position snapshots
-- Broker reconciliation
-- Autopsies
-- Memory records
-- System state
-- Kill switch events
+> **Don't trust one AI. Convene a committee.**
 
-## Security Direction
-
-Secrets must remain server-side and must never be committed.
-
-Protected credentials include:
-
-- Alpaca API credentials
-- Featherless API credentials
-- Supabase service credentials
-- Broker, market-data, and MCP credentials
-
-Live trading must require explicit configuration and protective controls. Paper trading should be the default implementation target.
-
-## Recommended Build Order
-
-1. Complete repository foundation docs.
-2. Define environment and secrets model.
-3. Create initial Supabase schema.
-4. Implement the state machine.
-5. Implement deterministic quantitative services.
-6. Implement Featherless inference adapter.
-7. Implement agent runtime.
-8. Implement Risk Governor.
-9. Implement Execution Guard.
-10. Implement Alpaca paper-trading adapter.
-11. Implement reconciliation and monitoring.
-12. Build the War Room frontend.
-13. Add audit replay, autopsy, and memory.
-14. Add adversarial and end-to-end tests.
-15. Prepare practical deployment.
-
-## Implementation Rule
-
-Before adding application code, contributors and AI assistants must read `AGENTS.md`.
-
-Any change that weakens the separation between AI reasoning and deterministic execution requires explicit approval.
+> **AI builds the case. The Governor decides whether the case is allowed to touch the market.**
