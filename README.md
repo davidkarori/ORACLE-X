@@ -2,6 +2,8 @@
 
 ### The AI Investment Committee That Doesn't Trade on Blind Faith
 
+![ORACLE X paper-trading War Room](assets/oracle-x-cover.png)
+
 ORACLE X is an autonomous, multi-agent AI trading intelligence system built for the **Alpaca AI Trading Agents Hackathon**.
 
 Instead of trusting a single AI model to make a trading decision, ORACLE X creates an investment committee where specialized agents reason about an opportunity, challenge assumptions, construct a defined-risk options strategy, and stress-test the proposal.
@@ -87,7 +89,37 @@ See `AGENTS.md` for the non-negotiable engineering contract and `CODEX-INSTRUCTI
 
 ## Current status
 
-Architecture and repository handoff are established. Implementation proceeds in staged milestones, beginning with the foundation and Featherless AI Engine.
+A working hackathon vertical slice is implemented. It includes a FastAPI service, typed committee contracts, Featherless and Alpaca adapters, a deterministic state machine, options normalization, quantitative checks, Risk Governor, Execution Guard, idempotent paper-order intent, append-only replay and the War Room interface.
+
+## Judge quick links
+
+- [Demo runbook](docs/DEMO.md)
+- [Two-minute video script](docs/VIDEO-SCRIPT.md)
+- [Submission brief](docs/SUBMISSION.md)
+- [Hackathon presentation](assets/presentation/oracle-x-hackathon-deck.pptx)
+- [Safety governance](AGENTS.md)
+
+## Run the War Room
+
+```powershell
+python -m pip install -e ".[test]"
+python -m uvicorn app.main:app --app-dir backend --port 8000
+```
+
+Open `http://127.0.0.1:8000`.
+
+The default fixture mode is deterministic, clearly labelled and unable to submit orders. To connect Featherless and Alpaca, copy `.env.example` to `.env`, add server-side credentials, and keep every paper-trading safety setting enabled. See `docs/DEMO.md` for the connected and paper-execution checklist.
+
+## Safety evidence
+
+- Agents return advisory typed contracts and cannot import the broker execution path.
+- Risk approval and final execution validation are deterministic.
+- Live Alpaca endpoints are rejected during configuration validation.
+- Fixture evidence cannot authorize a broker mutation.
+- Paper execution is disabled by default and requires an explicit second operator action.
+- Audit events are append-only and exposed through a replay endpoint.
+
+Run the focused safety suite with `python -m pytest -q`.
 
 ## Core philosophy
 

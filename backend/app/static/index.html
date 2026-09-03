@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ORACLE X War Room</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="mark">OX</span><div><strong>ORACLE X</strong><small>OPTIONS DECISION CONTROL</small></div></div>
+    <div class="system-strip">
+      <span id="modePill" class="pill safe">PAPER ONLY</span>
+      <span id="integrationPill" class="pill">CHECKING</span>
+      <label class="switch"><input id="killSwitch" type="checkbox"><span></span> Kill switch</label>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="rail">
+      <section class="run-form">
+        <label for="symbol">UNDERLYING</label>
+        <div class="symbol-row"><input id="symbol" value="SPY" maxlength="8"><button id="runButton">Run committee</button></div>
+        <label class="check"><input id="execute" type="checkbox"> Request paper execution</label>
+      </section>
+      <div class="rail-title"><span>RECENT RUNS</span><button id="refreshButton" class="quiet">Refresh</button></div>
+      <nav id="runList" class="run-list"><p class="empty">No committee runs yet.</p></nav>
+    </aside>
+
+    <section class="content">
+      <div class="run-header">
+        <div><p class="eyebrow">ACTIVE CASE</p><h1 id="caseTitle">Awaiting opportunity</h1></div>
+        <div class="state-box"><small>LIFECYCLE</small><strong id="state">IDLE</strong></div>
+      </div>
+
+      <div id="notice" class="notice">Run the committee to create a replayable options decision.</div>
+
+      <section>
+        <div class="section-heading"><h2>Investment Committee</h2><span id="providerLabel">No inference yet</span></div>
+        <div id="committee" class="committee"></div>
+      </section>
+
+      <div class="two-column">
+        <section>
+          <div class="section-heading"><h2>Strategy & Quant</h2><span>DETERMINISTIC</span></div>
+          <div id="strategy" class="data-panel empty-panel">No normalized strategy.</div>
+        </section>
+        <section>
+          <div class="section-heading"><h2>Safety Gates</h2><span>FAIL CLOSED</span></div>
+          <div id="gates" class="data-panel empty-panel">No risk evaluation.</div>
+        </section>
+      </div>
+
+      <section>
+        <div class="section-heading"><h2>Decision Replay</h2><span id="eventCount">0 EVENTS</span></div>
+        <div id="timeline" class="timeline"><p class="empty">Audit events will appear here.</p></div>
+      </section>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

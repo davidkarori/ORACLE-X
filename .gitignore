@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+*.egg-info/
 
 # Node
 node_modules/
@@ -47,5 +48,6 @@ temp/
 reports/
 exports/
 replay-output/
+*.inspect.ndjson
 .agents/
 .codex/

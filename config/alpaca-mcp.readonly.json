@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "alpaca-readonly": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "ALPACA_API_KEY",
+        "-e",
+        "ALPACA_SECRET_KEY",
+        "-e",
+        "ALPACA_PAPER_TRADE=true",
+        "-e",
+        "ALPACA_TOOLSETS=account,assets,stock-data,options-data,news",
+        "alpaca/mcp-server"
+      ]
+    }
+  }
+}
