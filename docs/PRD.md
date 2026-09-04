@@ -13,13 +13,14 @@ ORACLE X treats a trade as a committee decision.
 1. Detect an opportunity.
 2. Athena builds the evidence-backed thesis.
 3. Hades attacks the thesis.
-4. Hermes verifies that mediated read-only research is complete and traceable.
-5. Deterministic strategy, quant and stress services build and test the options expression.
-6. Deterministic Risk Governor evaluates hard constraints.
-7. Execution Guard performs the final mechanical check.
-8. Alpaca executes only after approval.
-9. ORACLE X monitors the position.
-10. On exit, Morpheus performs a trade autopsy and ORACLE X stores advisory-only lessons.
+4. Hermes recommends a typed, defined-risk options strategy family and structural intent.
+5. Deterministic Strategy and Quant services validate the recommendation, construct actual legs and calculate all authoritative numbers.
+6. The deterministic Stress Engine calculates scenarios; Morpheus interprets them as PASS, CAUTION or REJECT.
+7. Deterministic Risk Governor evaluates hard constraints only if Morpheus has not rejected the proposal.
+8. Execution Guard performs the final mechanical check.
+9. Alpaca executes only after approval.
+10. ORACLE X monitors the position.
+11. On exit, the Autopsy Service reconstructs the outcome and the Learning Service stores advisory-only lessons.
 
 ## Primary demo story
 

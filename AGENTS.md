@@ -22,17 +22,21 @@ The system is designed for paper trading during development and the hackathon de
 Featherless is the first-class LLM inference provider.
 
 Four agents:
-- ATHENA — opportunity/market intelligence.
-- HADES — adversarial critic.
-- HERMES — coordination, messaging and auditable MCP research mediation.
-- MORPHEUS — post-trade autopsy and advisory learning.
+- ATHENA — opportunity intelligence and thesis formation.
+- HADES — adversarial critic that may require revision or rejection.
+- HERMES — options strategy advisor for defined-risk strategy family and structural intent.
+- MORPHEUS — pre-risk stress-test interpreter that returns PASS, CAUTION or REJECT.
 
-LLMs interpret evidence and produce structured decisions. They do NOT own deterministic financial calculations.
+LLMs interpret evidence and produce structured advisory decisions. They do NOT own deterministic financial calculations, construct executable option legs, approve risk or authorize execution.
+
+HERMES may recommend only these strategy families: LONG_CALL, LONG_PUT, BULL_CALL_SPREAD, BEAR_PUT_SPREAD and IRON_CONDOR. The deterministic Strategy Engine must independently validate the recommendation and construct the actual structure.
+
+MORPHEUS reviews deterministic stress outputs before the Risk Governor. A MORPHEUS REJECT verdict blocks the proposal, but PASS and CAUTION are advisory inputs and never constitute risk approval.
 
 ### Market/tool layer
-Alpaca MCP is the agent-facing research/tool interface.
+Alpaca MCP is shared, read-only research infrastructure. It is not the identity or primary responsibility of any agent.
 
-Alpaca MCP tool access must be allowlisted per agent.
+Alpaca MCP tool access must be allowlisted per agent. ATHENA and HADES may request and read relevant evidence only through the safety-bounded adapter. No agent receives a mutation-capable MCP tool.
 
 ### Execution layer
 Alpaca Trading API is the controlled execution interface.
@@ -42,7 +46,7 @@ Alpaca CLI is used for operational automation, diagnostics, paper smoke tests, r
 ### Safety boundary
 The path is:
 
-Agent reasoning → contract validation → evidence validation → deterministic Risk Governor → Execution Guard → idempotency check → Alpaca execution adapter → broker confirmation → reconciliation → event/audit log
+Shared read-only evidence → ATHENA thesis → HADES challenge → HERMES strategy-family recommendation → deterministic Strategy Engine and Quant Service → deterministic Stress Engine → MORPHEUS stress verdict → deterministic Risk Governor → Execution Guard → idempotency check → Alpaca execution adapter → broker confirmation → reconciliation → event/audit log
 
 No LLM may directly place, modify or cancel an order.
 
@@ -121,25 +125,33 @@ Use JSON structured output from Featherless.
 
 ## 7. Quantitative integrity
 
-Python/application code selects and validates strategy families, runs stress scenarios, and calculates exact quantities: indicators, returns, volatility, IV, Greeks, spreads, reward/risk, exposure, P&L and position sizing.
+Python/application code independently validates strategy-family recommendations, constructs actual option legs, runs stress scenarios, and calculates exact quantities: market prices, indicators, returns, volatility, IV, Greeks, spreads, reward/risk, max loss, max profit, breakevens, exposure, scenario P&L and position sizing.
 
 The model may interpret these values, compare evidence and explain them.
 
 Never rely on LLM arithmetic for an execution-critical value.
 
-## 8. Options
+## 8. Post-trade services
+
+Post-trade autopsy and learning are separate from the four-agent pre-risk committee.
+
+The Autopsy Service reconstructs the immutable thesis, objections, strategy, stress results, risk decision, execution record and outcome, then records what worked and what failed.
+
+The Learning Service converts completed autopsy evidence into advisory-only memory. Memory may influence future agent context, but it has zero execution authority and may never bypass the Risk Governor or Execution Guard.
+
+## 9. Options
 
 ORACLE X is options-aware. Represent multi-leg strategies explicitly, including spreads, straddles/strangles, iron condors and other defined-risk combinations.
 
 Each leg must record contract, underlying, option type, strike, expiration, side, position intent and ratio, plus available Greeks/IV.
 
-## 9. Auditability
+## 10. Auditability
 
 Record agent decisions, Featherless inference traces, Alpaca MCP calls, risk evaluations/events, trades/legs/orders/execution events, positions, state transitions, system events, trade autopsies and learning memory.
 
 Decision replay must be possible from stored evidence and event history.
 
-## 10. Security
+## 11. Security
 
 - Secrets only on the server.
 - Never expose API keys to the frontend.
@@ -149,19 +161,19 @@ Decision replay must be possible from stored evidence and event history.
 - Fail closed when critical dependencies are unavailable.
 - Validate external payloads before use.
 
-## 11. Database
+## 12. Database
 
 PostgreSQL is the source of truth. Use migrations under `supabase/migrations/`.
 
 Canonical tables: users, portfolios, risk_policies, market_snapshots, opportunities, trades, agent_decisions, inference_traces, risk_evaluations, trade_legs, alpaca_orders, execution_events, positions, oracle_events, risk_events, mcp_tool_calls, trade_autopsies, oracle_memory, system_state.
 
-## 12. Testing
+## 13. Testing
 
 Financial/risk logic requires automated tests. Minimum coverage includes each agent contract, Risk Governor, state machine, Execution Guard, Alpaca adapter, idempotency, reconciliation and failure/timeout paths.
 
 A test must prove duplicate order submission cannot occur.
 
-## 13. Engineering behavior for Codex
+## 14. Engineering behavior for Codex
 
 Before changing architecture:
 1. Read this file.
@@ -174,6 +186,6 @@ Before changing architecture:
 
 Do not invent missing business rules. Put unresolved items in `docs/DECISIONS.md`.
 
-## 14. Definition of done
+## 15. Definition of done
 
 A feature is done when implementation, typed contracts, failure handling, tests, relevant audit/event behavior and documentation are present, secrets are protected, and paper-trading safety remains intact.

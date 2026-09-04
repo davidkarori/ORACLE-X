@@ -10,7 +10,7 @@ Most AI trading demos allow one probabilistic model to generate both the idea an
 
 ## AI logic
 
-Hermes mediates auditable read-only MCP research. Athena creates an evidence-backed thesis, and Hades may continue, require one revision or reject it. Deterministic services then select, validate, price and stress the options structure. After a closed position, Morpheus creates an immutable autopsy and advisory-only memory. Each Featherless response is schema-validated; invalid or unavailable inference fails closed.
+Athena creates an evidence-backed thesis, and Hades may continue, require one revision or reject it. Hermes recommends a typed defined-risk strategy family without calculating authoritative numbers. Deterministic services validate and construct the actual legs, calculate every execution-critical value and generate stress scenarios. Morpheus interprets those scenarios as PASS, CAUTION or REJECT before risk evaluation. After a closed position, separate Autopsy and Learning services reconstruct the outcome and create advisory-only memory. Each Featherless response is schema-validated; invalid or unavailable inference fails closed.
 
 ## Deterministic controls
 

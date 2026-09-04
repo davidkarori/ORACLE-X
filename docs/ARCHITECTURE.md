@@ -18,9 +18,11 @@ API / Orchestrator
         |             |
         |             +--> Featherless API
         |
-        +--> Read-only MCP Adapter --> Alpaca MCP
+        +--> Shared Read-only MCP Adapter --> Alpaca MCP
         |
-        +--> Strategy/Quant/Stress Services
+        +--> Strategy Engine / Quant Service
+        |
+        +--> Stress Engine --> MORPHEUS interpretation
         |      |
         |      +--> Risk Governor
         |      +--> Execution Guard
@@ -32,6 +34,8 @@ API / Orchestrator
         +--> PostgreSQL / Supabase
         |
         +--> Event/Audit Stream
+        |
+        +--> Autopsy Service --> Learning Service
 
 ## Component responsibilities
 
@@ -42,16 +46,19 @@ Presentation only. It never holds broker or Featherless secrets.
 Coordinates lifecycle, validates commands, starts agent runs, persists events and exposes read APIs.
 
 ### Agent runtime
-Runs typed Featherless contracts. Hermes receives mediated MCP evidence; agent code never receives broker mutation tools.
+Runs typed Featherless contracts for the canonical committee. Athena forms the thesis, Hades challenges it, Hermes recommends a defined-risk strategy family, and Morpheus interprets deterministic stress outputs before risk evaluation. Agent code never receives broker mutation tools.
 
 ### Featherless adapter
 OpenAI-compatible client targeting https://api.featherless.ai/v1. The adapter owns provider-specific concerns and records inference traces.
 
 ### Alpaca MCP adapter
-Provides strictly allowlisted stock, options and news research. It performs the MCP handshake, records metadata for every call and exposes no execution tool.
+Provides shared, strictly allowlisted stock, options and news research. Athena and Hades may request relevant evidence through the adapter. It performs the MCP handshake, records metadata for every call and exposes no execution tool. MCP is infrastructure, not an agent role.
 
-### Quant service
-Selects normalized supported option structures and calculates exact market/risk values and stress scenarios in deterministic code.
+### Strategy Engine and Quant Service
+The Strategy Engine independently validates Hermes' family recommendation and constructs normalized option legs. The Quant Service calculates all prices, Greeks, volatility, max loss/profit, breakevens, exposure, position sizing and other execution-critical arithmetic.
+
+### Stress Engine and Morpheus
+The deterministic Stress Engine calculates scenario P&L, break conditions and severity. Morpheus interprets those immutable outputs and returns PASS, CAUTION or REJECT before the Risk Governor. REJECT blocks the proposal; no verdict grants risk approval.
 
 ### Risk Governor
 Hard safety boundary. Returns APPROVE/REJECT with reason codes and measured values.
@@ -64,6 +71,12 @@ Only component permitted to submit broker orders.
 
 ### Event store
 SQLite supports local/fixture work. PostgreSQL/Supabase is selected by `DATABASE_URL` for deployed use. `oracle_events`, execution-intent uniqueness and advisory memory preserve durable replay semantics.
+
+### Autopsy Service
+Reconstructs the completed thesis, objections, strategy, stress, risk, execution and outcome records, then records what worked and failed.
+
+### Learning Service
+Creates auditable, advisory-only memory from completed autopsies. Memory may enrich future agent context but has zero execution authority.
 
 ## Failure philosophy
 

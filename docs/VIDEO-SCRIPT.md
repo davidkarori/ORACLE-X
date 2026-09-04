@@ -10,7 +10,7 @@ Show the War Room.
 
 Enter `AAPL`, keep execution off, and select **Run committee**.
 
-"Hermes mediates read-only Alpaca MCP research, and every tool call is visible. Athena builds the thesis. Hades attacks it and can force a revision or rejection. Deterministic services choose, price and stress the options structure. None of the agents can call the broker execution path."
+"MCP is shared read-only research infrastructure, and every tool call is visible. Athena builds the thesis. Hades attacks it and can force a revision or rejection. Hermes recommends a defined-risk strategy family, while deterministic services construct, price and stress the actual legs. Morpheus interprets those stress results before risk evaluation. None of the agents can call the broker execution path."
 
 ## 0:45 - Show the strategy and numbers
 
@@ -28,7 +28,7 @@ Point to Risk Governor and Execution Guard.
 
 Scroll through Decision Replay and toggle the kill switch once.
 
-"Every MCP call, transition, model decision, calculation, verdict and execution validation becomes an append-only event. The fixture lifecycle safely reaches position close, where Morpheus records an advisory lesson. The kill switch still blocks the system deterministically."
+"Every MCP call, transition, model decision, calculation, verdict and execution validation becomes an append-only event. The fixture lifecycle safely reaches position close, where separate Autopsy and Learning services reconstruct the outcome and record advisory-only lessons. The kill switch still blocks the system deterministically."
 
 ## 1:50 - Close
 

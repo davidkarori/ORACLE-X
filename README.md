@@ -6,7 +6,7 @@
 
 ORACLE X is an autonomous, multi-agent AI trading intelligence system built for the **Alpaca AI Trading Agents Hackathon**.
 
-Instead of trusting a single AI model to make a trading decision, ORACLE X creates an investment committee where specialized agents gather evidence, reason about an opportunity, challenge assumptions, and learn from completed outcomes. Deterministic services construct and stress-test the options strategy.
+Instead of trusting a single AI model to make a trading decision, ORACLE X creates an investment committee where specialized agents form a thesis, challenge it, recommend a defined-risk strategy family and interpret deterministic stress results. Deterministic services construct and calculate the actual options strategy.
 
 A deterministic **Risk Governor** then decides whether the proposed trade is actually allowed to reach the market.
 
@@ -18,17 +18,19 @@ A deterministic **Risk Governor** then decides whether the proposed trade is act
 |---|---|---|
 | **ATHENA** | Opportunity Intelligence | Is there an interesting opportunity? |
 | **HADES** | Adversarial Critic | Assume Athena is wrong. Why? |
-| **HERMES** | Research Coordinator | Is the evidence complete, traceable and safe to use? |
-| **MORPHEUS** | Trade Autopsy | What should future committees learn from the outcome? |
+| **HERMES** | Options Strategy Advisor | Which defined-risk strategy family best expresses the surviving thesis? |
+| **MORPHEUS** | Stress-Test Interpreter | Do the deterministic stress results justify PASS, CAUTION or REJECT? |
 
 ## Safety Architecture
 
 ```text
-Alpaca API + read-only MCP evidence
+Alpaca API + shared read-only MCP evidence
       ↓
-HERMES mediation → ATHENA thesis → HADES challenge
+ATHENA thesis → HADES challenge → HERMES advisory strategy family
       ↓
-Deterministic strategy, quant and stress services
+Deterministic Strategy Engine + Quant Service + Stress Engine
+      ↓
+MORPHEUS stress verdict
       ↓
 Deterministic Risk Governor
       ↓
@@ -38,7 +40,7 @@ Alpaca Execution Adapter
       ↓
 Alpaca
       ↓
-Position lifecycle → MORPHEUS autopsy → advisory memory
+Position lifecycle → Autopsy Service → Learning Service
 ```
 
 **No LLM may directly place, modify or cancel an order.**
@@ -68,7 +70,11 @@ ATHENA Thesis
   ↓
 HADES Critique
   ↓
-Deterministic Strategy + Stress Test
+HERMES Strategy Recommendation
+  ↓
+Deterministic Structure + Quant + Stress
+  ↓
+MORPHEUS Stress Verdict
   ↓
 Risk Evaluation
   ↓
@@ -76,9 +82,9 @@ Execution
   ↓
 Outcome
   ↓
-MORPHEUS Trade Autopsy
+Autopsy Service
   ↓
-Learning
+Learning Service
 ```
 
 The system is designed to answer **why a trade was made, why it was rejected, and what was learned afterward**.
@@ -89,7 +95,7 @@ See `AGENTS.md` for the non-negotiable engineering contract and `CODEX-INSTRUCTI
 
 ## Current status
 
-A working hackathon vertical slice is implemented. It includes typed Featherless contracts, visible read-only Alpaca MCP research, five deterministic options strategies, quantitative and stress calculations, a full replayable lifecycle through autopsy and learning, SQLite/PostgreSQL persistence, Risk Governor, Execution Guard, idempotent paper-order intent and the War Room interface.
+A working hackathon vertical slice is implemented with read-only Alpaca MCP research, five deterministic options strategies, quantitative and stress calculations, a replayable lifecycle, SQLite/PostgreSQL persistence, Risk Governor, Execution Guard and idempotent paper-order intent. The governing role model above is authoritative; typed runtime alignment is the next implementation step.
 
 ## Judge quick links
 

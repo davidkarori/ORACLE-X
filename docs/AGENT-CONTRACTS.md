@@ -9,7 +9,7 @@ Consumes market snapshot, news/evidence, account/position context and determinis
 
 Produces opportunity assessment, thesis, confidence, supporting evidence, invalidation conditions and risks.
 
-Must not execute.
+May request and read relevant evidence through the shared read-only MCP adapter. Must not execute.
 
 ## HADES
 Role: adversarial critic.
@@ -18,35 +18,43 @@ Question: “Assume Athena is wrong. Why?”
 
 Consumes Athena's structured thesis plus independent evidence.
 
-Produces strongest counterarguments, missing evidence, contradiction signals, thesis survivability, confidence adjustment and recommendation to continue/reject.
+Produces strongest counterarguments, fatal objections, survivable objections, missing evidence and a CONTINUE/REVISE/REJECT recommendation.
 
-Must not execute.
+May request and read relevant evidence through the shared read-only MCP adapter. Must not execute or authorize risk.
 
 ## HERMES
-Role: coordination and auditable tool mediator.
+Role: options strategy advisor.
 
-Question: “Is the research complete, traceable and safe to pass into the committee?”
+Question: “Which defined-risk strategy family best expresses the surviving thesis?”
 
-Consumes allowlisted read-only MCP call results and their audit metadata.
+Consumes the surviving typed thesis, Hades objections, deterministic market context and configured risk profile.
 
-Produces a research summary, tool references, data gaps and a READY/BLOCKED recommendation.
+Produces a typed advisory recommendation for LONG_CALL, LONG_PUT, BULL_CALL_SPREAD, BEAR_PUT_SPREAD or IRON_CONDOR, plus rationale, directional intent and structural intent.
 
-Must not choose authoritative quantities, approve risk or execute.
+Must not select authoritative contracts, strikes, expiration, quantities or prices; calculate Greeks, volatility, max loss/profit, breakevens, P&L, exposure or position sizing; approve risk; or execute.
 
 ## MORPHEUS
-Role: post-trade autopsy and learning.
+Role: pre-risk stress-test interpreter.
 
-Question: “What should future committees learn from this completed outcome?”
+Question: “What do the deterministic stress scenarios reveal about failure risk?”
 
-Consumes the immutable thesis, objections, deterministic strategy/stress/risk records and final position outcome.
+Consumes the normalized deterministic strategy and immutable Stress Engine outputs.
 
-Produces what worked, what failed, wrong assumptions, lessons and a RETAIN/REVISE/RETIRE recommendation.
+Produces scenario interpretation, break-condition commentary and a PASS/CAUTION/REJECT verdict.
 
-Must not alter history, approve future trades or execute. Stored memory is advisory only.
+REJECT blocks the proposal before Risk Governor evaluation. PASS and CAUTION do not approve risk. Morpheus must not change deterministic stress values or execute.
 
-## Deterministic strategy and stress services
+## Shared MCP infrastructure
 
-The Strategy Engine selects and validates supported structures from the surviving typed thesis and risk profile. The Quant Service calculates every execution-critical value. The Stress Engine generates scenario P&L, break conditions, severity and PASS/CAUTION/REJECT without LLM arithmetic.
+MCP is shared read-only research infrastructure, not an agent identity. The adapter owns allowlists, call logging and mutation denial. No agent may use MCP to place, modify, cancel, exercise or close a broker order or position.
+
+## Deterministic services
+
+The Strategy Engine validates Hermes' advisory family and constructs actual legs. The Quant Service calculates every execution-critical value. The Stress Engine generates scenario P&L, break conditions and severity without LLM arithmetic.
+
+## Post-trade services
+
+The Autopsy Service reconstructs the completed decision and outcome record and records what worked and failed. The Learning Service creates advisory-only memory from that autopsy. Neither service can approve or execute a trade, and memory cannot alter execution permissions.
 
 ## Shared contract requirements
 

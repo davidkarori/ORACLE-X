@@ -3,7 +3,7 @@
 ## Three distinct roles
 
 ### Alpaca MCP
-Agent-facing market research access through Hermes mediation. Use explicit allowlists.
+Shared read-only market research infrastructure. Athena and Hades may request relevant evidence through the adapter. Use explicit allowlists.
 
 Allowed research categories:
 - assets;
