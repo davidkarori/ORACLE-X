@@ -92,7 +92,7 @@ function statusMessage(run) {
   if (run.status === "RUNNING") return "The committee is working through the controlled lifecycle.";
   if (run.status === "EXECUTION_READY") return "Every deterministic gate passed. No broker mutation was requested.";
   if (run.status === "SUBMITTED") return `Paper order submitted: ${run.broker_order?.status || "pending"}.`;
-  if (run.status === "LEARNED") return "Fixture lifecycle complete. Morpheus stored an advisory-only lesson; no broker was contacted.";
+  if (run.status === "LEARNED") return "Fixture lifecycle complete. Autopsy and Learning services stored advisory-only evidence; no broker was contacted.";
   if (run.status === "REJECTED") return `Flow blocked: ${run.risk?.reason_codes?.join(", ") || run.execution_guard?.reason_codes?.join(", ") || "committee objection"}.`;
   return run.status;
 }
@@ -111,11 +111,12 @@ function renderCommittee(decisions) {
     const content = {
       ATHENA: [item.bias, item.thesis],
       HADES: [item.recommendation, item.critique],
-      HERMES: [item.recommendation, item.research_summary],
-      MORPHEUS: [item.recommendation, item.outcome_summary],
+      HERMES: [item.preferred_strategy_family, item.rationale],
+      MORPHEUS: [item.recommendation, item.interpretation],
     }[role];
-    const disagreement = ["REJECT", "REVISE", "BLOCKED", "RETIRE"].includes(content[0]);
-    return `<article class="agent ${disagreement ? "disagreement" : ""}"><header><strong>${role}</strong><span class="decision">${html(content[0])}</span></header><p>${html(content[1])}</p><small>${html(item.provider)} / confidence ${Math.round(item.confidence * 100)}%</small></article>`;
+    const disagreement = ["REJECT", "REVISE"].includes(content[0]);
+    const caution = content[0] === "CAUTION";
+    return `<article class="agent ${disagreement ? "disagreement" : ""} ${caution ? "caution" : ""}"><header><strong>${role}</strong><span class="decision">${html(content[0])}</span></header><p>${html(content[1])}</p><small>${html(item.provider)} / confidence ${Math.round(item.confidence * 100)}%</small></article>`;
   }).join("");
 }
 
@@ -182,7 +183,12 @@ function renderAutopsy(run) {
     return;
   }
   $("autopsy").className = "data-panel";
-  $("autopsy").innerHTML = `<div class="autopsy-head"><strong>${html(run.autopsy.recommendation)}</strong><span>NO EXECUTION AUTHORITY</span></div><p class="panel-copy">${html(run.autopsy.outcome_summary)}</p><ul>${run.memory.lessons.map(lesson => `<li>${html(lesson)}</li>`).join("")}</ul>`;
+  const findings = [
+    ...run.autopsy.what_worked.map(item => `Worked: ${item}`),
+    ...run.autopsy.what_failed.map(item => `Failed: ${item}`),
+    ...run.memory.lessons.map(item => `Lesson: ${item}`),
+  ];
+  $("autopsy").innerHTML = `<div class="autopsy-head"><strong>${html(run.autopsy.execution_outcome)}</strong><span>AUTOPSY + LEARNING SERVICES</span></div><p class="panel-copy">${html(run.autopsy.outcome_summary)}</p><ul>${findings.map(item => `<li>${html(item)}</li>`).join("")}</ul>`;
 }
 
 function renderTimeline(events) {

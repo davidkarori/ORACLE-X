@@ -24,6 +24,7 @@ ORACLE-X/
 │   │   ├── domain.py
 │   │   ├── integrations.py
 │   │   ├── mcp_adapter.py
+│   │   ├── post_trade.py
 │   │   ├── quant.py
 │   │   ├── store.py
 │   │   ├── workflow.py

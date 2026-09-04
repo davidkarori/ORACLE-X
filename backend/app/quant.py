@@ -26,17 +26,30 @@ class StrategyRequest:
     bias: Bias
     risk_profile: str
     thesis: str
+    recommended_family: StrategyFamily
+    target_risk_profile: str
 
 
 class StrategyEngine:
     SUPPORTED = frozenset(StrategyFamily)
+    DIRECTIONAL_FAMILIES = {
+        Bias.BULLISH: frozenset({StrategyFamily.LONG_CALL, StrategyFamily.BULL_CALL_SPREAD}),
+        Bias.BEARISH: frozenset({StrategyFamily.LONG_PUT, StrategyFamily.BEAR_PUT_SPREAD}),
+        Bias.NEUTRAL: frozenset({StrategyFamily.IRON_CONDOR}),
+    }
 
     def select_family(self, request: StrategyRequest) -> StrategyFamily:
-        if request.bias == Bias.NEUTRAL:
-            return StrategyFamily.IRON_CONDOR
-        if request.bias == Bias.BULLISH:
-            return StrategyFamily.LONG_CALL if request.risk_profile == "AGGRESSIVE" else StrategyFamily.BULL_CALL_SPREAD
-        return StrategyFamily.LONG_PUT if request.risk_profile == "AGGRESSIVE" else StrategyFamily.BEAR_PUT_SPREAD
+        family = request.recommended_family
+        if family not in self.SUPPORTED:
+            raise StrategyError(f"Unsupported strategy family: {family}")
+        if family not in self.DIRECTIONAL_FAMILIES[request.bias]:
+            raise StrategyError(f"{family.value} conflicts with {request.bias.value} directional intent")
+        expected_target = "PREMIUM_ONLY" if family in {StrategyFamily.LONG_CALL, StrategyFamily.LONG_PUT} else "DEFINED_RISK"
+        if request.target_risk_profile != expected_target:
+            raise StrategyError(f"{family.value} requires target risk profile {expected_target}")
+        if request.risk_profile == "CONSERVATIVE" and expected_target != "DEFINED_RISK":
+            raise StrategyError("Conservative workflow requires a defined-risk spread structure")
+        return family
 
     def build(self, market: MarketContext, request: StrategyRequest) -> list[OptionLeg]:
         family = self.select_family(request)

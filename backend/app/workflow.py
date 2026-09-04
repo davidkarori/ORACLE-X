@@ -5,13 +5,11 @@ from typing import Any
 
 from .config import Settings
 from .domain import (
-    AgentRole,
     AthenaDecision,
     CreateRunRequest,
     ExecutionValidation,
     GateResult,
     HadesDecision,
-    LearningMemory,
     LifecycleState,
     PositionState,
     RiskEvaluation,
@@ -20,6 +18,7 @@ from .domain import (
 )
 from .integrations import AlpacaClient, FeatherlessClient, IntegrationError
 from .mcp_adapter import AlpacaMcpAdapter
+from .post_trade import AutopsyService, LearningService
 from .quant import QuantService, StrategyEngine, StrategyError, StrategyRequest, StressEngine
 from .store import PersistenceStore
 
@@ -63,6 +62,8 @@ class WorkflowService:
         self.strategy_engine = StrategyEngine()
         self.quant = QuantService()
         self.stress = StressEngine()
+        self.autopsy_service = AutopsyService()
+        self.learning_service = LearningService()
         self.kill_switch = settings.kill_switch_active
         self._tasks: set[asyncio.Task[Any]] = set()
 
@@ -106,17 +107,9 @@ class WorkflowService:
 
             run.mcp_calls, mcp_context = await self.mcp.research(run.symbol)
             for call in run.mcp_calls:
-                self._event(run, "MCP_TOOL_CALL", "HERMES", call.model_dump(mode="json"))
+                self._event(run, "MCP_TOOL_CALL", call.requesting_agent.value, call.model_dump(mode="json"))
             if any(not call.success for call in run.mcp_calls):
                 self._reject(run, "MCP_RESEARCH_FAILED")
-                return
-            hermes = await self.featherless.hermes(
-                {"symbol": run.symbol, "calls": [call.model_dump(mode="json") for call in run.mcp_calls], "results": mcp_context}
-            )
-            run.decisions.append(hermes)
-            self._event(run, "AGENT_DECISION", "HERMES", hermes.model_dump(mode="json"))
-            if hermes.recommendation == "BLOCKED":
-                self._reject(run, "HERMES_RESEARCH_BLOCKED")
                 return
 
             memories = [memory.model_dump(mode="json") for memory in self.store.list_memories(run.symbol)]
@@ -136,7 +129,26 @@ class WorkflowService:
                 return
             self._transition(run, LifecycleState.THESIS_CHALLENGED, "ORCHESTRATOR", "Hades objections resolved")
 
-            request = StrategyRequest(bias=athena.bias, risk_profile=run.risk_profile, thesis=athena.thesis)
+            hermes = await self.featherless.hermes(
+                {
+                    "symbol": run.symbol,
+                    "athena": athena.model_dump(mode="json"),
+                    "hades": hades.model_dump(mode="json"),
+                    "market": run.market.model_dump(mode="json"),
+                    "risk_profile": run.risk_profile,
+                }
+            )
+            run.decisions.append(hermes)
+            self._event(run, "AGENT_DECISION", "HERMES", hermes.model_dump(mode="json"))
+            if hermes.directional_intent != athena.bias:
+                raise StrategyError("Hermes directional intent conflicts with the surviving Athena thesis")
+            request = StrategyRequest(
+                bias=athena.bias,
+                risk_profile=run.risk_profile,
+                thesis=athena.thesis,
+                recommended_family=hermes.preferred_strategy_family,
+                target_risk_profile=hermes.target_risk_profile,
+            )
             family = self.strategy_engine.select_family(request)
             legs = self.strategy_engine.build(run.market, request)
             run.strategy, run.quant = self.quant.evaluate(
@@ -154,12 +166,31 @@ class WorkflowService:
 
             run.stress = self.stress.evaluate(run.strategy, run.quant)
             self._event(run, "STRESS_TEST", "STRESS_ENGINE", run.stress.model_dump(mode="json"))
-            self._transition(run, LifecycleState.STRESS_TESTED, "ORCHESTRATOR", "Deterministic stress scenarios evaluated")
+            morpheus = await self.featherless.morpheus(
+                {
+                    "symbol": run.symbol,
+                    "athena": athena.model_dump(mode="json"),
+                    "hades": hades.model_dump(mode="json"),
+                    "strategy": run.strategy.model_dump(mode="json"),
+                    "stress": run.stress.model_dump(mode="json"),
+                }
+            )
+            run.decisions.append(morpheus)
+            self._event(run, "AGENT_DECISION", "MORPHEUS", morpheus.model_dump(mode="json"))
+            self._transition(run, LifecycleState.STRESS_TESTED, "ORCHESTRATOR", "Deterministic stress evaluated and Morpheus verdict recorded")
             if run.stress.recommendation == "REJECT":
                 self._reject(run, "REJECTED_BY_STRESS_ENGINE")
                 return
+            if morpheus.recommendation == "REJECT":
+                self._reject(run, "REJECTED_BY_MORPHEUS")
+                return
 
-            run.risk = self._evaluate_risk(run, hades.recommendation, hermes.recommendation)
+            run.risk = self._evaluate_risk(
+                run,
+                hades.recommendation,
+                hermes.preferred_strategy_family.value,
+                morpheus.recommendation,
+            )
             self._event(run, "RISK_EVALUATION", "RISK_GOVERNOR", run.risk.model_dump(mode="json"))
             self._transition(run, LifecycleState.RISK_EVALUATED, "RISK_GOVERNOR", "Hard gates evaluated")
             if run.risk.decision != "APPROVE":
@@ -265,32 +296,21 @@ class WorkflowService:
         self._transition(run, LifecycleState.POSITION_CLOSED, "POSITION_SERVICE", "Simulated position closed")
         self._event(run, "POSITION_CLOSED", "POSITION_SERVICE", run.position.model_dump(mode="json"))
         self._transition(run, LifecycleState.AUTOPSY, "ORCHESTRATOR", "Immutable trade record ready for autopsy")
-        run.autopsy = await self.featherless.morpheus(
-            {
-                "symbol": run.symbol,
-                "thesis": run.strategy.thesis,
-                "decisions": [decision.model_dump(mode="json") for decision in run.decisions],
-                "strategy": run.strategy.model_dump(mode="json"),
-                "stress": run.stress.model_dump(mode="json") if run.stress else None,
-                "risk": run.risk.model_dump(mode="json") if run.risk else None,
-                "position": run.position.model_dump(mode="json"),
-            }
-        )
-        run.decisions.append(run.autopsy)
-        self._event(run, "TRADE_AUTOPSY", "MORPHEUS", run.autopsy.model_dump(mode="json"))
-        run.memory = LearningMemory(
-            id=str(uuid.uuid4()),
-            source_run_id=run.id,
-            symbol=run.symbol,
-            lessons=run.autopsy.lessons,
-            confidence=run.autopsy.confidence,
-        )
+        run.autopsy = self.autopsy_service.create(run)
+        self._event(run, "TRADE_AUTOPSY", "AUTOPSY_SERVICE", run.autopsy.model_dump(mode="json"))
+        run.memory = self.learning_service.create(run.autopsy)
         self.store.save_memory(run.memory)
-        self._event(run, "LEARNING_MEMORY", "MEMORY_SERVICE", run.memory.model_dump(mode="json"))
+        self._event(run, "LEARNING_MEMORY", "LEARNING_SERVICE", run.memory.model_dump(mode="json"))
         self._transition(run, LifecycleState.LEARNED, "ORCHESTRATOR", "Advisory-only memory stored")
         run.status = "LEARNED"
 
-    def _evaluate_risk(self, run: WorkflowRun, hades_recommendation: str, hermes_recommendation: str) -> RiskEvaluation:
+    def _evaluate_risk(
+        self,
+        run: WorkflowRun,
+        hades_recommendation: str,
+        hermes_family: str,
+        morpheus_recommendation: str,
+    ) -> RiskEvaluation:
         assert run.market and run.quant and run.strategy and run.stress
         now = utc_now()
         gates = [
@@ -298,8 +318,9 @@ class WorkflowService:
             GateResult(code="KILL_SWITCH", passed=not self.kill_switch, measured=self.kill_switch, limit=False),
             GateResult(code="ACCOUNT_ACTIVE", passed="ACTIVE" in run.market.account_status, measured=run.market.account_status, limit="ACTIVE"),
             GateResult(code="HADES_CONTINUE", passed=hades_recommendation == "CONTINUE", measured=hades_recommendation, limit="CONTINUE"),
-            GateResult(code="HERMES_READY", passed=hermes_recommendation == "READY", measured=hermes_recommendation, limit="READY"),
+            GateResult(code="HERMES_FAMILY_VALIDATED", passed=run.strategy.strategy_type.value == hermes_family, measured=hermes_family, limit=run.strategy.strategy_type.value),
             GateResult(code="STRESS_ACCEPTABLE", passed=run.stress.recommendation != "REJECT", measured=run.stress.recommendation, limit="PASS or CAUTION"),
+            GateResult(code="MORPHEUS_NOT_REJECTED", passed=morpheus_recommendation != "REJECT", measured=morpheus_recommendation, limit="PASS or CAUTION"),
             GateResult(code="DATA_FRESH", passed=run.quant.data_age_seconds <= self.settings.max_market_data_age_seconds, measured=run.quant.data_age_seconds, limit=self.settings.max_market_data_age_seconds),
             GateResult(code="MAX_TRADE_LOSS", passed=run.quant.max_loss <= self.settings.max_trade_loss, measured=run.quant.max_loss, limit=self.settings.max_trade_loss),
             GateResult(code="LIQUIDITY", passed=run.quant.liquidity_passed, measured=run.quant.max_spread_pct, limit=self.settings.max_bid_ask_spread_pct),

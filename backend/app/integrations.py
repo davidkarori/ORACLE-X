@@ -56,7 +56,10 @@ class FeatherlessClient:
             AgentRole.HERMES,
             context,
             HermesDecision,
-            "Summarize the mediated read-only MCP research, identify data gaps, and choose READY or BLOCKED. Do not select or price a trade.",
+            (
+                "Recommend exactly one allowed defined-risk strategy family, directional intent, target risk profile, and structural intent. "
+                "Do not choose contracts, strikes, expiry, quantity, prices, Greeks, payoff values, exposure, or position size."
+            ),
         )
 
     async def morpheus(self, context: dict[str, Any]) -> MorpheusDecision:
@@ -64,7 +67,10 @@ class FeatherlessClient:
             AgentRole.MORPHEUS,
             context,
             MorpheusDecision,
-            "Perform a post-trade autopsy from the immutable record. Identify lessons only; never alter execution authority.",
+            (
+                "Interpret the immutable deterministic stress scenarios and choose PASS, CAUTION, or REJECT. "
+                "Do not recalculate scenario values, approve risk, or authorize execution."
+            ),
         )
 
     async def _decide(
@@ -146,6 +152,23 @@ class FeatherlessClient:
 
     def _fixture(self, role: AgentRole, context: dict[str, Any], contract: type[DecisionT]) -> DecisionT:
         symbol = str(context.get("symbol", "SPY"))
+        athena_context = context.get("athena", {})
+        bias = Bias(athena_context.get("bias", Bias.BULLISH))
+        risk_profile = str(context.get("risk_profile", "CONSERVATIVE"))
+        if bias == Bias.NEUTRAL:
+            family = "IRON_CONDOR"
+        elif bias == Bias.BULLISH:
+            family = "LONG_CALL" if risk_profile == "AGGRESSIVE" else "BULL_CALL_SPREAD"
+        else:
+            family = "LONG_PUT" if risk_profile == "AGGRESSIVE" else "BEAR_PUT_SPREAD"
+        target_risk = "PREMIUM_ONLY" if family in {"LONG_CALL", "LONG_PUT"} else "DEFINED_RISK"
+        stress_context = context.get("stress", {})
+        stress_recommendation = str(stress_context.get("recommendation", "PASS"))
+        critical_scenarios = [
+            str(item.get("name"))
+            for item in stress_context.get("scenarios", [])
+            if item.get("severity") == "CRITICAL" or item.get("breaks_thesis")
+        ]
         common = {
             "role": role,
             "confidence": 0.76,
@@ -169,18 +192,17 @@ class FeatherlessClient:
                 "recommendation": "CONTINUE",
             },
             AgentRole.HERMES: {
-                "research_summary": "Read-only market, option-chain, and news checks are available for deterministic evaluation.",
-                "tool_refs": ["get_stock_snapshot", "get_option_chain", "get_news"],
-                "data_gaps": [],
-                "recommendation": "READY",
+                "preferred_strategy_family": family,
+                "rationale": f"{family} expresses the surviving {bias.value} thesis while keeping the structure bounded.",
+                "directional_intent": bias,
+                "target_risk_profile": target_risk,
+                "structural_intent": ["Use normalized explicit legs", "Reject naked short exposure"],
             },
             AgentRole.MORPHEUS: {
-                "outcome_summary": "The simulated lifecycle preserved every gate and produced a replayable bounded outcome.",
-                "what_worked": ["Defined risk", "Fresh evidence", "Idempotent intent"],
-                "what_failed": [],
-                "wrong_assumptions": [],
-                "lessons": ["Keep deterministic gates independent from advisory memory"],
-                "recommendation": "RETAIN",
+                "interpretation": "Deterministic scenarios show bounded loss and identify the conditions that break the thesis.",
+                "break_conditions": list(stress_context.get("break_conditions", [])),
+                "critical_scenarios": critical_scenarios,
+                "recommendation": stress_recommendation,
             },
         }
         return contract.model_validate({**common, **payloads[role]})

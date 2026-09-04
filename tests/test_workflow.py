@@ -15,6 +15,7 @@ from app.domain import (
     HermesDecision,
     LearningMemory,
     LifecycleState,
+    MorpheusDecision,
     OptionLeg,
     StrategyFamily,
     WorkflowRun,
@@ -54,6 +55,17 @@ def run_record(run_id: str = "00000000-0000-0000-0000-000000000001") -> Workflow
         risk_profile="CONSERVATIVE",
         created_at=now,
         updated_at=now,
+    )
+
+
+def strategy_request(bias: Bias, profile: str, family: StrategyFamily) -> StrategyRequest:
+    target = "PREMIUM_ONLY" if family in {StrategyFamily.LONG_CALL, StrategyFamily.LONG_PUT} else "DEFINED_RISK"
+    return StrategyRequest(
+        bias=bias,
+        risk_profile=profile,
+        thesis="A sufficiently detailed deterministic test thesis.",
+        recommended_family=family,
+        target_risk_profile=target,
     )
 
 
@@ -100,20 +112,65 @@ async def test_hades_cannot_authorize_execution():
 
 
 @pytest.mark.asyncio
-async def test_hermes_can_block_incomplete_research():
+async def test_hermes_strategy_recommendation_affects_family_selection():
     service = service_for()
-    blocked = service.featherless._fixture(AgentRole.HERMES, {"symbol": "SPY"}, HermesDecision).model_copy(
-        update={"data_gaps": ["No option chain"], "recommendation": "BLOCKED"}
+    recommendation = service.featherless._fixture(
+        AgentRole.HERMES,
+        {"symbol": "SPY", "athena": {"bias": "BULLISH"}, "risk_profile": "AGGRESSIVE"},
+        HermesDecision,
+    ).model_copy(
+        update={"preferred_strategy_family": StrategyFamily.BULL_CALL_SPREAD, "target_risk_profile": "DEFINED_RISK"}
     )
 
-    async def block(_context):
-        return blocked
+    async def recommend(_context):
+        return recommendation
 
-    service.featherless.hermes = block
+    service.featherless.hermes = recommend
+    run = await service.run_to_completion(CreateRunRequest(risk_profile="AGGRESSIVE", simulate_lifecycle=False))
+
+    assert run.strategy and run.strategy.strategy_type == StrategyFamily.BULL_CALL_SPREAD
+    assert len(run.strategy.legs) == 2
+
+
+def test_hermes_contract_cannot_carry_authoritative_numbers():
+    client = FeatherlessClient(Settings())
+    payload = {
+        "confidence": 0.8,
+        "evidence_refs": ["market"],
+        "preferred_strategy_family": "BULL_CALL_SPREAD",
+        "rationale": "A bounded bullish spread matches the surviving thesis.",
+        "directional_intent": "BULLISH",
+        "target_risk_profile": "DEFINED_RISK",
+        "structural_intent": ["Buy lower call and sell higher call"],
+        "max_loss": 123.45,
+    }
+
+    with pytest.raises(IntegrationError, match="Malformed HERMES"):
+        client.parse_for_test(AgentRole.HERMES, payload)
+
+
+@pytest.mark.asyncio
+async def test_morpheus_can_reject_before_risk_governor():
+    service = service_for()
+    rejection = service.featherless._fixture(
+        AgentRole.MORPHEUS,
+        {"symbol": "SPY", "stress": {"recommendation": "CAUTION", "scenarios": []}},
+        MorpheusDecision,
+    ).model_copy(update={"recommendation": "REJECT"})
+
+    async def reject(_context):
+        return rejection
+
+    service.featherless.morpheus = reject
     run = await service.run_to_completion(CreateRunRequest(simulate_lifecycle=False))
 
     assert run.state == LifecycleState.REJECTED
-    assert run.strategy is None
+    assert run.risk is None
+    assert any(
+        event.payload.get("reason_codes") == ["REJECTED_BY_MORPHEUS"]
+        for event in service.store.events(run.id)
+        if event.kind == "WORKFLOW_REJECTED"
+    )
 
 
 def test_strategy_engine_rejects_naked_short_structure():
@@ -148,7 +205,7 @@ def test_strategy_engine_rejects_naked_short_structure():
 )
 def test_supported_strategy_math_is_deterministic(bias, profile, family, leg_count):
     market = AlpacaClient._fixture("SPY")
-    request = StrategyRequest(bias=bias, risk_profile=profile, thesis="A sufficiently detailed deterministic test thesis.")
+    request = strategy_request(bias, profile, family)
     engine = StrategyEngine()
     legs = engine.build(market, request)
     strategy, quant = QuantService().evaluate(family, request.thesis, bias, legs, market.underlying_price, market.observed_at, 20)
@@ -162,7 +219,7 @@ def test_supported_strategy_math_is_deterministic(bias, profile, family, leg_cou
 
 def test_hermes_cannot_bypass_quant_validation():
     market = AlpacaClient._fixture("SPY")
-    request = StrategyRequest(bias=Bias.BULLISH, risk_profile="CONSERVATIVE", thesis="A sufficiently detailed deterministic test thesis.")
+    request = strategy_request(Bias.BULLISH, "CONSERVATIVE", StrategyFamily.BULL_CALL_SPREAD)
     legs = StrategyEngine().build(market, request)
     legs[0].quantity = 2
     with pytest.raises(StrategyError, match="one 1:1"):
@@ -171,7 +228,7 @@ def test_hermes_cannot_bypass_quant_validation():
 
 def test_stress_engine_blocks_unsafe_liquidity():
     market = AlpacaClient._fixture("SPY")
-    request = StrategyRequest(bias=Bias.BULLISH, risk_profile="CONSERVATIVE", thesis="A sufficiently detailed deterministic test thesis.")
+    request = strategy_request(Bias.BULLISH, "CONSERVATIVE", StrategyFamily.BULL_CALL_SPREAD)
     legs = StrategyEngine().build(market, request)
     strategy, quant = QuantService().evaluate(StrategyFamily.BULL_CALL_SPREAD, request.thesis, Bias.BULLISH, legs, market.underlying_price, market.observed_at, 20)
     quant.liquidity_passed = False
@@ -221,7 +278,7 @@ async def test_missing_mcp_research_cannot_authorize_broker_mutation():
 async def test_mcp_cannot_execute_trades():
     adapter = AlpacaMcpAdapter(Settings())
     with pytest.raises(IntegrationError, match="not allowlisted"):
-        await adapter.call("place_option_order", AgentRole.HERMES, {"symbol": "SPY"})
+        await adapter.call("place_option_order", AgentRole.ATHENA, {"symbol": "SPY"})
 
 
 def test_mutation_capable_mcp_toolset_is_rejected():
@@ -309,6 +366,12 @@ async def test_position_lifecycle_reaches_learned_with_audited_transitions():
     assert run.state == LifecycleState.LEARNED
     assert run.position and run.position.status == "CLOSED"
     assert run.autopsy and run.memory
+    assert run.autopsy.morpheus_verdict in {"PASS", "CAUTION"}
+    assert run.autopsy.original_thesis
+    assert run.memory.advisory_only is True and run.memory.execution_authority is False
+    actors = [event.actor for event in service.store.events(run.id)]
+    assert "AUTOPSY_SERVICE" in actors
+    assert "LEARNING_SERVICE" in actors
     assert transitions[-9:] == [
         "SUBMITTED", "FILLED", "POSITION_OPEN", "POSITION_MONITORING", "EXIT_SIGNAL",
         "EXIT_EXECUTION", "POSITION_CLOSED", "AUTOPSY", "LEARNED",

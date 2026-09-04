@@ -95,7 +95,7 @@ See `AGENTS.md` for the non-negotiable engineering contract and `CODEX-INSTRUCTI
 
 ## Current status
 
-A working hackathon vertical slice is implemented with read-only Alpaca MCP research, five deterministic options strategies, quantitative and stress calculations, a replayable lifecycle, SQLite/PostgreSQL persistence, Risk Governor, Execution Guard and idempotent paper-order intent. The governing role model above is authoritative; typed runtime alignment is the next implementation step.
+A working hackathon vertical slice implements the canonical typed committee, shared read-only Alpaca MCP research, five deterministic options strategies, quantitative and stress calculations, Morpheus pre-risk interpretation, separate Autopsy and Learning services, a replayable lifecycle, SQLite/PostgreSQL persistence, Risk Governor, Execution Guard and idempotent paper-order intent.
 
 ## Judge quick links
 

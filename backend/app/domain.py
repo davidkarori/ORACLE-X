@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def utc_now() -> datetime:
@@ -54,6 +54,8 @@ class LifecycleState(StrEnum):
 
 
 class DecisionMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     confidence: float = Field(ge=0, le=1)
     evidence_refs: list[str] = Field(default_factory=list)
     provider: str
@@ -83,20 +85,19 @@ class HadesDecision(DecisionMetadata):
 
 class HermesDecision(DecisionMetadata):
     role: Literal[AgentRole.HERMES] = AgentRole.HERMES
-    research_summary: str = Field(min_length=10)
-    tool_refs: list[str] = Field(default_factory=list)
-    data_gaps: list[str] = Field(default_factory=list)
-    recommendation: Literal["READY", "BLOCKED"]
+    preferred_strategy_family: StrategyFamily
+    rationale: str = Field(min_length=10)
+    directional_intent: Bias
+    target_risk_profile: Literal["DEFINED_RISK", "PREMIUM_ONLY"]
+    structural_intent: list[str] = Field(default_factory=list)
 
 
 class MorpheusDecision(DecisionMetadata):
     role: Literal[AgentRole.MORPHEUS] = AgentRole.MORPHEUS
-    outcome_summary: str = Field(min_length=10)
-    what_worked: list[str] = Field(default_factory=list)
-    what_failed: list[str] = Field(default_factory=list)
-    wrong_assumptions: list[str] = Field(default_factory=list)
-    lessons: list[str] = Field(default_factory=list)
-    recommendation: Literal["RETAIN", "REVISE", "RETIRE"]
+    interpretation: str = Field(min_length=10)
+    break_conditions: list[str] = Field(default_factory=list)
+    critical_scenarios: list[str] = Field(default_factory=list)
+    recommendation: Literal["PASS", "CAUTION", "REJECT"]
 
 
 AgentDecision = Annotated[
@@ -260,6 +261,26 @@ class PositionState(BaseModel):
     simulated: bool = False
 
 
+class TradeAutopsy(BaseModel):
+    id: str
+    source_run_id: str
+    symbol: str
+    original_thesis: str
+    hades_objections: list[str]
+    strategy_type: StrategyFamily
+    stress_recommendation: Literal["PASS", "CAUTION", "REJECT"]
+    morpheus_verdict: Literal["PASS", "CAUTION", "REJECT"]
+    risk_decision: Literal["APPROVE", "REJECT"]
+    execution_outcome: str
+    realized_pnl: float
+    unrealized_pnl: float
+    outcome_summary: str
+    what_worked: list[str]
+    what_failed: list[str]
+    wrong_assumptions: list[str]
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class LearningMemory(BaseModel):
     id: str
     source_run_id: str
@@ -300,7 +321,7 @@ class WorkflowRun(BaseModel):
     execution_guard: ExecutionValidation | None = None
     broker_order: dict[str, Any] | None = None
     position: PositionState | None = None
-    autopsy: MorpheusDecision | None = None
+    autopsy: TradeAutopsy | None = None
     memory: LearningMemory | None = None
     error: str | None = None
 

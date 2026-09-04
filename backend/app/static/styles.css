@@ -65,6 +65,8 @@ h2 { margin: 0; font-size: 13px; text-transform: uppercase; }
 .agent small { color: var(--muted); }
 .agent.disagreement { border-top: 2px solid var(--red); }
 .agent.disagreement .decision { color: var(--red); }
+.agent.caution { border-top: 2px solid var(--amber); }
+.agent.caution .decision { color: var(--amber); }
 .agent.pending { color: var(--muted); display: grid; place-items: center; }
 .mcp-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); background: var(--panel); }
 .mcp-call { min-width: 0; padding: 12px; border-right: 1px solid var(--line); }
