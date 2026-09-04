@@ -2,7 +2,7 @@
 
 PostgreSQL/Supabase is the source of truth.
 
-Migrations are applied in numeric order under `supabase/migrations/`. Migration `003_runtime_persistence.sql` adds runtime workflow snapshots, unique execution intents, globally ordered events and append-only learning memory without rewriting the original schema.
+Migrations are applied in numeric order under `supabase/migrations/`. Migration `003_runtime_persistence.sql` adds runtime workflow snapshots, unique execution intents, globally ordered events and append-only learning memory without rewriting the original schema. Migration `004_connected_security_remediation.sql` adds connected-path persistence, durable execution fingerprints and RLS restrictions for public Supabase projects.
 
 ## Canonical tables
 
@@ -27,6 +27,9 @@ Migrations are applied in numeric order under `supabase/migrations/`. Migration 
 - system_state
 - workflow_runs
 - execution_intents
+- risk_evaluations_runtime
+- broker_orders_runtime
+- broker_reconciliation_runtime
 
 ## Important audit data
 
@@ -48,6 +51,15 @@ Deterministic policy version, decision, reason codes and measured values.
 ### alpaca_orders
 Broker order ID, client order ID, class/type/prices/status/raw response.
 
+### broker_orders_runtime
+Complete outgoing order request, raw broker response, normalized status and reconciliation payload linked to a workflow run.
+
+### execution_intents
+Deterministic idempotency keys plus economic-intent fingerprints. Active fingerprints are unique so equivalent paper orders cannot be submitted twice across restarts.
+
+### system_state
+Durable ACTIVE/PAUSED/HALTED and kill-switch history. PostgreSQL records state changes as durable rows; local SQLite keeps the latest singleton state plus system events.
+
 ## Security
 
-API keys never belong in the database schema. Production deployment must add appropriate RLS/authorization policies.
+API keys never belong in the database schema. The runtime must connect with server-side credentials only. Supabase public/anonymous clients are not trusted writers: audit-sensitive tables enable RLS and restrict mutation to service-role runtime access.

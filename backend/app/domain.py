@@ -120,6 +120,7 @@ class OptionQuote(BaseModel):
     theta: float | None = None
     vega: float | None = None
     rho: float | None = None
+    status: str = "active"
 
     @property
     def midpoint(self) -> float:
@@ -133,6 +134,13 @@ class MarketContext(BaseModel):
     underlying_price: float = Field(gt=0)
     account_status: str
     buying_power: float = Field(ge=0)
+    options_approved_level: int = Field(default=0, ge=0)
+    market_is_open: bool = False
+    portfolio_exposure: float = Field(default=0, ge=0)
+    symbol_exposure: float = Field(default=0, ge=0)
+    open_trade_count: int = Field(default=0, ge=0)
+    conflicting_orders: list[str] = Field(default_factory=list)
+    conflicting_positions: list[str] = Field(default_factory=list)
     option_chain: list[OptionQuote] = Field(min_length=4)
     raw_refs: list[str] = Field(default_factory=list)
 
@@ -247,6 +255,30 @@ class ExecutionValidation(BaseModel):
     idempotency_key: str
     strategy_hash: str
     validated_at: datetime
+
+
+class SystemState(BaseModel):
+    status: Literal["ACTIVE", "PAUSED", "HALTED"] = "ACTIVE"
+    kill_switch_active: bool = False
+    changed_by: str = "SYSTEM"
+    reason: str = "Initialized"
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class BrokerOrderRecord(BaseModel):
+    broker: Literal["alpaca", "fixture"]
+    request_payload: dict[str, Any]
+    raw_response: dict[str, Any]
+    order_id: str | None = None
+    client_order_id: str
+    status: str
+    submitted_at: str | None = None
+    simulated: bool = False
+    legs: list[dict[str, Any]] = Field(default_factory=list)
+    fills: list[dict[str, Any]] = Field(default_factory=list)
+    positions: list[dict[str, Any]] = Field(default_factory=list)
+    reconciliation_status: Literal["KNOWN", "UNKNOWN", "MISMATCH", "SIMULATED"] = "UNKNOWN"
+    reconciliation_events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PositionState(BaseModel):

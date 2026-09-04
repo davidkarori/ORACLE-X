@@ -86,7 +86,7 @@ class FeatherlessClient:
         started = time.perf_counter()
         payload = {
             "model": model,
-            "temperature": 0.2,
+            "temperature": self.settings.featherless_temperature,
             "response_format": {"type": "json_object"},
             "messages": [
                 {
@@ -113,6 +113,9 @@ class FeatherlessClient:
                         headers=headers,
                         json=payload,
                     )
+                    if response.status_code == 429:
+                        retry_after = response.headers.get("Retry-After")
+                        raise IntegrationError(f"Featherless rate limited; retry_after={retry_after or 'unspecified'}")
                     response.raise_for_status()
                     result = response.json()
                 parsed = json.loads(result["choices"][0]["message"]["content"])
@@ -124,10 +127,14 @@ class FeatherlessClient:
                     trace_id=result.get("id", uuid.uuid4().hex),
                 )
                 return contract.model_validate(parsed)
-            except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError, ValidationError) as exc:
+            except (httpx.HTTPError, IntegrationError, KeyError, TypeError, ValueError, json.JSONDecodeError, ValidationError) as exc:
                 last_error = exc
                 if attempt < self.settings.featherless_max_retries:
-                    await asyncio.sleep(0.1 * (attempt + 1))
+                    retry_after = getattr(exc, "response", None).headers.get("Retry-After") if isinstance(exc, httpx.HTTPStatusError) else None
+                    if isinstance(exc, IntegrationError) and "retry_after=" in str(exc):
+                        retry_after = str(exc).split("retry_after=", 1)[1]
+                    delay = min(float(retry_after), 2.0) if retry_after and retry_after.replace(".", "", 1).isdigit() else 0.1 * (attempt + 1)
+                    await asyncio.sleep(delay)
         raise IntegrationError(f"Featherless {role.value} output failed contract validation: {last_error}")
 
     def parse_for_test(self, role: AgentRole, payload: dict[str, Any]) -> BaseModel:
@@ -233,9 +240,27 @@ class AlpacaClient:
                 stock_response.raise_for_status()
                 account = account_response.json()
                 stock_snapshot = stock_response.json()
+                clock_response = await client.get(f"{self.settings.alpaca_trading_base_url.rstrip('/')}/v2/clock", headers=self.headers)
+                orders_response = await client.get(
+                    f"{self.settings.alpaca_trading_base_url.rstrip('/')}/v2/orders",
+                    headers=self.headers,
+                    params={"status": "open", "symbols": symbol, "nested": "true"},
+                )
+                positions_response = await client.get(f"{self.settings.alpaca_trading_base_url.rstrip('/')}/v2/positions", headers=self.headers)
+                clock_response.raise_for_status()
+                orders_response.raise_for_status()
+                positions_response.raise_for_status()
+                clock = clock_response.json()
+                open_orders = orders_response.json()
+                positions = positions_response.json()
                 price = self._stock_price(stock_snapshot)
                 stock_observed_at = self._market_timestamp(stock_snapshot)
                 chain, options_observed_at = await self._option_chain(client, symbol, price)
+                symbol_positions = [
+                    str(item.get("symbol"))
+                    for item in positions
+                    if str(item.get("symbol", "")).startswith(symbol)
+                ]
             return MarketContext(
                 symbol=symbol,
                 source="alpaca",
@@ -243,8 +268,15 @@ class AlpacaClient:
                 underlying_price=price,
                 account_status=str(account.get("status", "UNKNOWN")),
                 buying_power=float(account.get("buying_power", 0)),
+                options_approved_level=int(account.get("options_approved_level") or account.get("options_trading_level") or 0),
+                market_is_open=bool(clock.get("is_open")),
+                portfolio_exposure=sum(abs(float(item.get("market_value", 0) or 0)) for item in positions),
+                symbol_exposure=sum(abs(float(item.get("market_value", 0) or 0)) for item in positions if str(item.get("symbol", "")).startswith(symbol)),
+                open_trade_count=len(open_orders),
+                conflicting_orders=[str(item.get("client_order_id") or item.get("id")) for item in open_orders],
+                conflicting_positions=symbol_positions,
                 option_chain=chain,
-                raw_refs=["alpaca:v2/account", "alpaca:v2/stocks/snapshot", "alpaca:v2/options/contracts", "alpaca:v1beta1/options/snapshots"],
+                raw_refs=["alpaca:v2/account", "alpaca:v2/clock", "alpaca:v2/orders", "alpaca:v2/positions", "alpaca:v2/stocks/snapshot", "alpaca:v2/options/contracts", "alpaca:v1beta1/options/snapshots"],
             )
         except (httpx.HTTPError, KeyError, TypeError, ValueError, IndexError) as exc:
             raise IntegrationError(f"Alpaca evidence retrieval failed: {exc}") from exc
@@ -288,11 +320,10 @@ class AlpacaClient:
         expiration = min(item["expiration_date"] for item in contracts)
         selected = [item for item in contracts if item["expiration_date"] == expiration]
         selected = sorted(selected, key=lambda item: abs(float(item["strike_price"]) - price))[:24]
-        symbols = ",".join(item["symbol"] for item in selected)
         snapshots_response = await client.get(
             f"{self.settings.alpaca_data_base_url.rstrip('/')}/v1beta1/options/snapshots/{symbol}",
             headers=self.headers,
-            params={"symbols": symbols, "feed": "indicative"},
+            params={"feed": "indicative", "limit": 100},
         )
         snapshots_response.raise_for_status()
         snapshots = snapshots_response.json().get("snapshots", {})
@@ -319,6 +350,7 @@ class AlpacaClient:
                     theta=greeks.get("theta"),
                     vega=greeks.get("vega"),
                     rho=greeks.get("rho"),
+                    status=str(item.get("status", "active")),
                 )
             )
             observed_times.append(self._market_timestamp(snapshot))
@@ -331,9 +363,56 @@ class AlpacaClient:
             raise IntegrationError("Paper execution is disabled by configuration")
         if not self.settings.is_paper_endpoint:
             raise IntegrationError("Refusing non-paper Alpaca endpoint")
+        payload = self.order_payload(strategy, client_order_id)
+        async with httpx.AsyncClient(timeout=20) as client:
+            try:
+                response = await client.post(
+                    f"{self.settings.alpaca_trading_base_url.rstrip('/')}/v2/orders",
+                    headers=self.headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                result = response.json()
+                reconciliation = await self.reconcile_order(client_order_id, result)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                lookup = await self.lookup_order(client_order_id)
+                if lookup is None:
+                    return {
+                        "broker": "alpaca",
+                        "request_payload": payload,
+                        "raw_response": {"error": str(exc)},
+                        "order_id": None,
+                        "client_order_id": client_order_id,
+                        "status": "unknown",
+                        "simulated": False,
+                        "legs": payload.get("legs", []),
+                        "fills": [],
+                        "positions": [],
+                        "reconciliation_status": "UNKNOWN",
+                        "reconciliation_events": [{"status": "UNKNOWN_SUBMISSION", "error": str(exc)}],
+                    }
+                result = lookup
+                reconciliation = await self.reconcile_order(client_order_id, result)
+        return {
+            "broker": "alpaca",
+            "request_payload": payload,
+            "raw_response": result,
+            "order_id": result.get("id"),
+            "client_order_id": result.get("client_order_id", client_order_id),
+            "status": result.get("status", "submitted"),
+            "submitted_at": result.get("submitted_at"),
+            "simulated": False,
+            "legs": result.get("legs") or payload.get("legs", []),
+            "fills": reconciliation["fills"],
+            "positions": reconciliation["positions"],
+            "reconciliation_status": reconciliation["status"],
+            "reconciliation_events": reconciliation["events"],
+        }
+
+    def order_payload(self, strategy: Strategy, client_order_id: str) -> dict[str, Any]:
         if len(strategy.legs) == 1:
             leg = strategy.legs[0]
-            payload: dict[str, Any] = {
+            return {
                 "symbol": leg.contract_symbol,
                 "qty": str(strategy.quantity),
                 "side": leg.side.lower(),
@@ -342,40 +421,75 @@ class AlpacaClient:
                 "limit_price": f"{leg.midpoint:.2f}",
                 "client_order_id": client_order_id,
             }
-        else:
-            payload = {
-                "order_class": "mleg",
-                "qty": str(strategy.quantity),
-                "type": "limit",
-                "time_in_force": "day",
-                "limit_price": f"{(strategy.net_debit or strategy.net_credit) / 100:.2f}",
-                "client_order_id": client_order_id,
-                "legs": [
-                    {
-                        "symbol": leg.contract_symbol,
-                        "ratio_qty": str(leg.ratio),
-                        "side": leg.side.lower(),
-                        "position_intent": leg.position_intent.lower(),
-                    }
-                    for leg in strategy.legs
-                ],
-            }
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(
-                f"{self.settings.alpaca_trading_base_url.rstrip('/')}/v2/orders",
-                headers=self.headers,
-                json=payload,
-            )
-            response.raise_for_status()
-            result = response.json()
+        limit_price = (strategy.net_debit or -strategy.net_credit) / 100
         return {
-            "broker": "alpaca",
-            "order_id": result.get("id"),
-            "client_order_id": result.get("client_order_id", client_order_id),
-            "status": result.get("status", "submitted"),
-            "submitted_at": result.get("submitted_at"),
-            "simulated": False,
+            "order_class": "mleg",
+            "qty": str(strategy.quantity),
+            "type": "limit",
+            "time_in_force": "day",
+            "limit_price": f"{limit_price:.2f}",
+            "client_order_id": client_order_id,
+            "legs": [
+                {
+                    "symbol": leg.contract_symbol,
+                    "ratio_qty": str(leg.ratio),
+                    "side": leg.side.lower(),
+                    "position_intent": leg.position_intent.lower(),
+                }
+                for leg in strategy.legs
+            ],
         }
+
+    async def lookup_order(self, client_order_id: str) -> dict[str, Any] | None:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(
+                f"{self.settings.alpaca_trading_base_url.rstrip('/')}/v2/orders:by_client_order_id",
+                headers=self.headers,
+                params={"client_order_id": client_order_id, "nested": "true"},
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+
+    async def reconcile_order(self, client_order_id: str, order: dict[str, Any]) -> dict[str, Any]:
+        lookup = await self.lookup_order(client_order_id)
+        resolved = lookup or order
+        fills = [leg for leg in resolved.get("legs", []) if str(leg.get("filled_qty", "0")) not in {"0", "0.0"}]
+        if str(resolved.get("filled_qty", "0")) not in {"0", "0.0"}:
+            fills.append(resolved)
+        positions = await self.positions_for_order(resolved)
+        filled_without_position = str(resolved.get("status", "")).lower() in {"filled", "partially_filled"} and not positions
+        mismatch = resolved.get("client_order_id") not in {None, client_order_id} or filled_without_position
+        return {
+            "status": "MISMATCH" if mismatch else "KNOWN",
+            "fills": fills,
+            "positions": positions,
+            "events": [
+                {
+                    "status": "ORDER_LOOKUP",
+                    "client_order_id": client_order_id,
+                    "broker_order_id": resolved.get("id"),
+                    "order_status": resolved.get("status"),
+                    "mismatch": mismatch,
+                    "filled_without_position": filled_without_position,
+                }
+            ],
+        }
+
+    async def positions_for_order(self, order: dict[str, Any]) -> list[dict[str, Any]]:
+        symbols = [str(leg.get("symbol")) for leg in order.get("legs", []) if leg.get("symbol")]
+        if not symbols and order.get("symbol"):
+            symbols = [str(order["symbol"])]
+        positions: list[dict[str, Any]] = []
+        async with httpx.AsyncClient(timeout=20) as client:
+            for symbol in symbols:
+                response = await client.get(f"{self.settings.alpaca_trading_base_url.rstrip('/')}/v2/positions/{symbol}", headers=self.headers)
+                if response.status_code == 404:
+                    continue
+                response.raise_for_status()
+                positions.append(response.json())
+        return positions
 
     @staticmethod
     def _fixture(symbol: str) -> MarketContext:
@@ -405,6 +519,8 @@ class AlpacaClient:
             underlying_price=100.0,
             account_status="FIXTURE_ACTIVE",
             buying_power=100_000,
+            options_approved_level=3,
+            market_is_open=True,
             option_chain=quotes,
             raw_refs=["fixture:submission-safe-option-chain"],
         )

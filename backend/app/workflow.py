@@ -1,6 +1,8 @@
 import asyncio
+import hashlib
+import json
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from .config import Settings
@@ -64,8 +66,17 @@ class WorkflowService:
         self.stress = StressEngine()
         self.autopsy_service = AutopsyService()
         self.learning_service = LearningService()
-        self.kill_switch = settings.kill_switch_active
+        if settings.kill_switch_active:
+            self.set_kill_switch(True, "Initial configuration requested kill switch", actor="SYSTEM")
         self._tasks: set[asyncio.Task[Any]] = set()
+
+    @property
+    def system_state(self):
+        return self.store.get_system_state()
+
+    @property
+    def kill_switch(self) -> bool:
+        return self.system_state.kill_switch_active
 
     def start(self, request: CreateRunRequest) -> WorkflowRun:
         run = self._create_run(request)
@@ -117,6 +128,7 @@ class WorkflowService:
                 {"symbol": run.symbol, "market": run.market.model_dump(mode="json"), "mcp": mcp_context, "advisory_memory": memories}
             )
             run.decisions.append(athena)
+            self.store.save_agent_decision(run.id, athena)
             self._event(run, "AGENT_DECISION", "ATHENA", athena.model_dump(mode="json"))
             self._transition(run, LifecycleState.THESIS_CREATED, "ORCHESTRATOR", "Athena contract validated")
 
@@ -139,6 +151,7 @@ class WorkflowService:
                 }
             )
             run.decisions.append(hermes)
+            self.store.save_agent_decision(run.id, hermes)
             self._event(run, "AGENT_DECISION", "HERMES", hermes.model_dump(mode="json"))
             if hermes.directional_intent != athena.bias:
                 raise StrategyError("Hermes directional intent conflicts with the surviving Athena thesis")
@@ -176,6 +189,7 @@ class WorkflowService:
                 }
             )
             run.decisions.append(morpheus)
+            self.store.save_agent_decision(run.id, morpheus)
             self._event(run, "AGENT_DECISION", "MORPHEUS", morpheus.model_dump(mode="json"))
             self._transition(run, LifecycleState.STRESS_TESTED, "ORCHESTRATOR", "Deterministic stress evaluated and Morpheus verdict recorded")
             if run.stress.recommendation == "REJECT":
@@ -192,6 +206,7 @@ class WorkflowService:
                 morpheus.recommendation,
             )
             self._event(run, "RISK_EVALUATION", "RISK_GOVERNOR", run.risk.model_dump(mode="json"))
+            self.store.save_risk_evaluation(run.id, run.risk)
             self._transition(run, LifecycleState.RISK_EVALUATED, "RISK_GOVERNOR", "Hard gates evaluated")
             if run.risk.decision != "APPROVE":
                 self._reject(run, *run.risk.reason_codes)
@@ -233,6 +248,7 @@ class WorkflowService:
     ) -> tuple[AthenaDecision, HadesDecision]:
         hades = await self.featherless.hades({"symbol": run.symbol, "athena": athena.model_dump(mode="json"), "mcp": mcp_context})
         run.decisions.append(hades)
+        self.store.save_agent_decision(run.id, hades)
         self._event(run, "AGENT_DECISION", "HADES", hades.model_dump(mode="json"))
         if hades.recommendation != "REVISE":
             return athena, hades
@@ -240,21 +256,47 @@ class WorkflowService:
             {"symbol": run.symbol, "previous_thesis": athena.model_dump(mode="json"), "required_revision": hades.model_dump(mode="json")}
         )
         run.decisions.append(revised)
+        self.store.save_agent_decision(run.id, revised)
         self._event(run, "THESIS_REVISION", "ATHENA", revised.model_dump(mode="json"))
         rereview = await self.featherless.hades(
             {"symbol": run.symbol, "athena": revised.model_dump(mode="json"), "previous_objections": hades.model_dump(mode="json")}
         )
         run.decisions.append(rereview)
+        self.store.save_agent_decision(run.id, rereview)
         self._event(run, "AGENT_DECISION", "HADES", rereview.model_dump(mode="json"))
         return revised, rereview
 
     async def _submit(self, run: WorkflowRun) -> None:
-        assert run.execution_guard and run.strategy
-        if not self.store.reserve_execution(run.execution_guard.idempotency_key, run.id):
+        assert run.execution_guard and run.strategy and run.risk
+        if run.mode == "connected":
+            approved_strategy_hash = run.execution_guard.strategy_hash
+            refreshed_market = await self.alpaca.market_context(run.symbol)
+            run.market = refreshed_market
+            if run.quant:
+                run.quant.data_age_seconds = round(max(0.0, (utc_now() - refreshed_market.observed_at).total_seconds()), 3)
+            self._event(run, "FINAL_MARKET_REFRESH", "EXECUTION_GUARD", refreshed_market.model_dump(mode="json"))
+            run.execution_guard = self._execution_guard(run)
+            if run.execution_guard.strategy_hash != approved_strategy_hash:
+                run.execution_guard.decision = "BLOCK"
+                run.execution_guard.reason_codes.append("APPROVED_STRATEGY_HASH_CHANGED")
+            self._event(run, "FINAL_EXECUTION_VALIDATION", "EXECUTION_GUARD", run.execution_guard.model_dump(mode="json"))
+            if run.execution_guard.decision != "PASS":
+                self._reject(run, *run.execution_guard.reason_codes)
+                return
+        fingerprint = self._execution_fingerprint(run)
+        if self.store.has_active_execution_conflict(fingerprint):
+            self._reject(run, "DUPLICATE_ECONOMIC_INTENT")
+            return
+        if not self.store.reserve_execution_intent(run.execution_guard.idempotency_key, run.id, fingerprint):
             self._reject(run, "DUPLICATE_ORDER_INTENT")
             return
         run.broker_order = await self.alpaca.submit_strategy(run.strategy, run.execution_guard.idempotency_key)
+        self.store.save_broker_order(run.id, run.broker_order)
+        self.store.save_reconciliation_event(run.id, run.broker_order.get("reconciliation_status", "UNKNOWN"), {"order": run.broker_order})
         self._event(run, "BROKER_ORDER", "EXECUTION_SERVICE", run.broker_order)
+        if run.broker_order.get("reconciliation_status") != "KNOWN":
+            self._reject(run, "BROKER_RECONCILIATION_UNKNOWN")
+            return
         self._transition(run, LifecycleState.SUBMITTED, "EXECUTION_SERVICE", "Alpaca accepted paper order")
         run.status = "SUBMITTED"
 
@@ -265,6 +307,13 @@ class WorkflowService:
             "order_id": f"sim-{run.id[:8]}",
             "client_order_id": run.execution_guard.idempotency_key if run.execution_guard else None,
             "status": "filled",
+            "request_payload": {},
+            "raw_response": {},
+            "legs": [],
+            "fills": [],
+            "positions": [],
+            "reconciliation_status": "SIMULATED",
+            "reconciliation_events": [],
             "simulated": True,
         }
         self._event(run, "SIMULATION_STARTED", "FIXTURE_SIMULATOR", {"broker_mutation": False})
@@ -313,19 +362,31 @@ class WorkflowService:
     ) -> RiskEvaluation:
         assert run.market and run.quant and run.strategy and run.stress
         now = utc_now()
+        system_state = self.store.get_system_state()
+        days_to_expiration = (date.fromisoformat(run.strategy.expiration) - now.date()).days
+        reward_risk_ok = run.quant.reward_risk is None or run.quant.reward_risk >= self.settings.min_reward_risk
         gates = [
             GateResult(code="PAPER_MODE", passed=self.settings.trading_mode == "paper", measured=self.settings.trading_mode, limit="paper"),
-            GateResult(code="KILL_SWITCH", passed=not self.kill_switch, measured=self.kill_switch, limit=False),
+            GateResult(code="SYSTEM_ACTIVE", passed=system_state.status == "ACTIVE", measured=system_state.status, limit="ACTIVE"),
+            GateResult(code="KILL_SWITCH", passed=not system_state.kill_switch_active, measured=system_state.kill_switch_active, limit=False),
             GateResult(code="ACCOUNT_ACTIVE", passed="ACTIVE" in run.market.account_status, measured=run.market.account_status, limit="ACTIVE"),
+            GateResult(code="OPTIONS_APPROVAL", passed=run.market.options_approved_level >= self.settings.alpaca_min_options_level, measured=run.market.options_approved_level, limit=self.settings.alpaca_min_options_level),
             GateResult(code="HADES_CONTINUE", passed=hades_recommendation == "CONTINUE", measured=hades_recommendation, limit="CONTINUE"),
             GateResult(code="HERMES_FAMILY_VALIDATED", passed=run.strategy.strategy_type.value == hermes_family, measured=hermes_family, limit=run.strategy.strategy_type.value),
             GateResult(code="STRESS_ACCEPTABLE", passed=run.stress.recommendation != "REJECT", measured=run.stress.recommendation, limit="PASS or CAUTION"),
             GateResult(code="MORPHEUS_NOT_REJECTED", passed=morpheus_recommendation != "REJECT", measured=morpheus_recommendation, limit="PASS or CAUTION"),
             GateResult(code="DATA_FRESH", passed=run.quant.data_age_seconds <= self.settings.max_market_data_age_seconds, measured=run.quant.data_age_seconds, limit=self.settings.max_market_data_age_seconds),
             GateResult(code="MAX_TRADE_LOSS", passed=run.quant.max_loss <= self.settings.max_trade_loss, measured=run.quant.max_loss, limit=self.settings.max_trade_loss),
+            GateResult(code="PORTFOLIO_EXPOSURE", passed=run.market.portfolio_exposure + run.quant.exposure <= self.settings.max_portfolio_exposure, measured=run.market.portfolio_exposure + run.quant.exposure, limit=self.settings.max_portfolio_exposure),
+            GateResult(code="SYMBOL_CONCENTRATION", passed=run.market.symbol_exposure + run.quant.exposure <= self.settings.max_symbol_exposure, measured=run.market.symbol_exposure + run.quant.exposure, limit=self.settings.max_symbol_exposure),
+            GateResult(code="MAX_OPEN_TRADES", passed=run.market.open_trade_count < self.settings.max_open_trades, measured=run.market.open_trade_count, limit=self.settings.max_open_trades),
+            GateResult(code="MIN_REWARD_RISK", passed=reward_risk_ok, measured=run.quant.reward_risk, limit=self.settings.min_reward_risk),
+            GateResult(code="EXPIRATION_WINDOW", passed=self.settings.min_days_to_expiration <= days_to_expiration <= self.settings.max_days_to_expiration, measured=days_to_expiration, limit=[self.settings.min_days_to_expiration, self.settings.max_days_to_expiration]),
             GateResult(code="LIQUIDITY", passed=run.quant.liquidity_passed, measured=run.quant.max_spread_pct, limit=self.settings.max_bid_ask_spread_pct),
             GateResult(code="QUANTITY", passed=run.quant.position_quantity <= self.settings.max_position_quantity, measured=run.quant.position_quantity, limit=self.settings.max_position_quantity),
             GateResult(code="BUYING_POWER", passed=run.quant.exposure <= run.market.buying_power, measured=run.quant.exposure, limit=run.market.buying_power),
+            GateResult(code="BROKER_HEALTH", passed=run.market.account_status in {"ACTIVE", "FIXTURE_ACTIVE"}, measured=run.market.account_status, limit="ACTIVE"),
+            GateResult(code="POSITION_RECONCILED", passed=not run.market.conflicting_orders and not run.market.conflicting_positions, measured={"orders": run.market.conflicting_orders, "positions": run.market.conflicting_positions}, limit="no conflicting orders or positions"),
         ]
         reasons = [gate.code for gate in gates if not gate.passed]
         return RiskEvaluation(
@@ -339,7 +400,9 @@ class WorkflowService:
     def _execution_guard(self, run: WorkflowRun) -> ExecutionValidation:
         assert run.risk and run.market and run.strategy and run.quant
         strategy_hash = uuid.uuid5(uuid.NAMESPACE_URL, run.strategy.model_dump_json()).hex
-        idempotency_key = f"oracle-x-{run.id[:8]}-{strategy_hash[:10]}"
+        idempotency_key = f"oracle-x-{self._execution_fingerprint(run)[:24]}"
+        system_state = self.store.get_system_state()
+        days_to_expiration = (date.fromisoformat(run.strategy.expiration) - utc_now().date()).days
         structure_valid = True
         try:
             self.strategy_engine.validate(run.strategy.strategy_type, run.strategy.legs)
@@ -351,12 +414,20 @@ class WorkflowService:
             GateResult(code="RISK_APPROVED", passed=run.risk.decision == "APPROVE", measured=run.risk.decision, limit="APPROVE"),
             GateResult(code="STRATEGY_VALID", passed=structure_valid, measured=run.strategy.strategy_type.value, limit="normalized defined risk"),
             GateResult(code="QUANT_MATCH", passed=run.strategy.max_loss == run.quant.max_loss, measured=run.strategy.max_loss, limit=run.quant.max_loss),
-            GateResult(code="KILL_SWITCH", passed=not self.kill_switch, measured=self.kill_switch, limit=False),
+            GateResult(code="SYSTEM_ACTIVE", passed=system_state.status == "ACTIVE", measured=system_state.status, limit="ACTIVE"),
+            GateResult(code="KILL_SWITCH", passed=not system_state.kill_switch_active, measured=system_state.kill_switch_active, limit=False),
             GateResult(code="PAPER_ENDPOINT", passed=self.settings.is_paper_endpoint, measured=self.settings.alpaca_trading_base_url, limit="https://paper-api.alpaca.markets"),
+            GateResult(code="DATA_ENDPOINT", passed=self.settings.is_data_endpoint, measured=self.settings.alpaca_data_base_url, limit="https://data.alpaca.markets"),
             GateResult(code="LIVE_EVIDENCE_FOR_MUTATION", passed=(not run.execute_requested or run.market.source == "alpaca"), measured=run.market.source, limit="alpaca when executing"),
             GateResult(code="LIVE_INFERENCE_FOR_MUTATION", passed=(not run.execute_requested or all(decision.provider == "featherless" for decision in run.decisions)), measured=sorted({decision.provider for decision in run.decisions}), limit="featherless when executing"),
             GateResult(code="MCP_RESEARCH_FOR_MUTATION", passed=(not run.execute_requested or bool(self.settings.mcp_server_url) and all(call.success for call in run.mcp_calls)), measured={"configured": bool(self.settings.mcp_server_url), "successful_calls": sum(call.success for call in run.mcp_calls)}, limit="configured with all research calls successful when executing"),
             GateResult(code="EXECUTION_ENABLED", passed=(not run.execute_requested or self.settings.execution_enabled), measured=self.settings.execution_enabled, limit=True if run.execute_requested else "not required"),
+            GateResult(code="ACCOUNT_ACTIVE", passed="ACTIVE" in run.market.account_status, measured=run.market.account_status, limit="ACTIVE"),
+            GateResult(code="OPTIONS_APPROVAL", passed=run.market.options_approved_level >= self.settings.alpaca_min_options_level, measured=run.market.options_approved_level, limit=self.settings.alpaca_min_options_level),
+            GateResult(code="MARKET_SESSION", passed=run.market.market_is_open, measured=run.market.market_is_open, limit=True),
+            GateResult(code="CONTRACTS_ACTIVE", passed=all(leg.expiration >= utc_now().date().isoformat() for leg in run.strategy.legs), measured=[leg.expiration for leg in run.strategy.legs], limit="not expired"),
+            GateResult(code="EXPIRATION_WINDOW", passed=self.settings.min_days_to_expiration <= days_to_expiration <= self.settings.max_days_to_expiration, measured=days_to_expiration, limit=[self.settings.min_days_to_expiration, self.settings.max_days_to_expiration]),
+            GateResult(code="NO_CONFLICTING_BROKER_STATE", passed=not run.market.conflicting_orders and not run.market.conflicting_positions, measured={"orders": run.market.conflicting_orders, "positions": run.market.conflicting_positions}, limit="none"),
         ]
         reasons = [check.code for check in checks if not check.passed]
         return ExecutionValidation(
@@ -369,9 +440,37 @@ class WorkflowService:
         )
 
     def set_kill_switch(self, active: bool, reason: str, actor: str = "OPERATOR") -> bool:
-        self.kill_switch = active
-        self.store.append_system("KILL_SWITCH_CHANGED", actor, {"active": active, "reason": reason})
-        return self.kill_switch
+        from .domain import SystemState
+
+        state = SystemState(status="HALTED" if active else "ACTIVE", kill_switch_active=active, changed_by=actor, reason=reason, updated_at=utc_now())
+        self.store.set_system_state(state)
+        return state.kill_switch_active
+
+    def _execution_fingerprint(self, run: WorkflowRun) -> str:
+        assert run.risk and run.strategy
+        immutable = {
+            "account": "alpaca-paper",
+            "symbol": run.symbol,
+            "strategy_family": run.strategy.strategy_type.value,
+            "expiration": run.strategy.expiration,
+            "legs": [
+                {
+                    "symbol": leg.contract_symbol,
+                    "strike": leg.strike,
+                    "type": leg.option_type,
+                    "side": leg.side,
+                    "quantity": leg.quantity,
+                    "ratio": leg.ratio,
+                    "intent": leg.position_intent,
+                }
+                for leg in run.strategy.legs
+            ],
+            "price_intent": {"net_debit": run.strategy.net_debit, "net_credit": run.strategy.net_credit},
+            "risk_policy": run.risk.policy_version,
+            "risk_decision": run.risk.decision,
+            "approved_max_loss": run.strategy.max_loss,
+        }
+        return hashlib.sha256(json.dumps(immutable, sort_keys=True).encode()).hexdigest()
 
     def _transition(self, run: WorkflowRun, new_state: LifecycleState, actor: str, reason: str) -> None:
         if new_state not in ALLOWED_TRANSITIONS.get(run.state, set()):

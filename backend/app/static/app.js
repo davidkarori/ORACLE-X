@@ -12,10 +12,19 @@ function committeeSkeleton() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {headers: {"Content-Type": "application/json"}, ...options});
+  const token = sessionStorage.getItem("ORACLE_X_API_TOKEN") || localStorage.getItem("ORACLE_X_API_TOKEN") || "";
+  const headers = {"Content-Type": "application/json", ...(token ? {"Authorization": `Bearer ${token}`} : {}), ...(options.headers || {})};
+  const response = await fetch(path, {...options, headers});
   const text = await response.text();
   let payload;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
+  if (response.status === 401 && !token) {
+    const entered = window.prompt("Enter ORACLE X API bearer token");
+    if (entered) {
+      sessionStorage.setItem("ORACLE_X_API_TOKEN", entered.trim());
+      return api(path, options);
+    }
+  }
   if (!response.ok) throw new Error(payload?.detail || text || response.statusText);
   return payload;
 }

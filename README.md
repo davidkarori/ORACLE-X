@@ -95,7 +95,7 @@ See `AGENTS.md` for the non-negotiable engineering contract and `CODEX-INSTRUCTI
 
 ## Current status
 
-A working hackathon vertical slice implements the canonical typed committee, shared read-only Alpaca MCP research, five deterministic options strategies, quantitative and stress calculations, Morpheus pre-risk interpretation, separate Autopsy and Learning services, a replayable lifecycle, SQLite/PostgreSQL persistence, Risk Governor, Execution Guard and idempotent paper-order intent.
+A working hackathon vertical slice implements the canonical typed committee, shared read-only Alpaca MCP research, five deterministic options strategies, quantitative and stress calculations, Morpheus pre-risk interpretation, separate Autopsy and Learning services, a replayable lifecycle, SQLite/PostgreSQL persistence, role-protected APIs, durable system state, Risk Governor, Execution Guard, economic-intent idempotency and reconciled paper-order submission.
 
 ## Judge quick links
 
@@ -121,8 +121,10 @@ The default fixture mode is deterministic, clearly labelled and unable to submit
 - Agents return advisory typed contracts and cannot import the broker execution path.
 - Risk approval and final execution validation are deterministic.
 - Live Alpaca endpoints are rejected during configuration validation.
+- Sensitive provider hosts are allowlisted before credentials are sent.
 - Fixture evidence cannot authorize a broker mutation.
 - Paper execution is disabled by default and requires an explicit second operator action.
+- Alpaca paper orders are submitted only after durable kill-switch/system-state checks and broker reconciliation.
 - Audit events are append-only and exposed through a replay endpoint.
 
 Run the focused safety suite with `python -m pytest -q`.
